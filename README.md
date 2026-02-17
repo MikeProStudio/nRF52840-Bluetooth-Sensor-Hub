@@ -1,37 +1,76 @@
-# Beacon 1 Project
+# nRF52840 Bluetooth Sensor Hub
 
-This project is a beacon application based on the Zephyr RTOS. It includes a web interface for configuration and monitoring.
+A professional-grade BLE (Bluetooth Low Energy) beacon and sensor monitoring application developed for the **Seeed Studio XIAO nRF52840 Sense**. Built on the **Zephyr RTOS**, this project demonstrates high-performance sensor data acquisition, real-time audio processing, and intelligent power management.
 
-## Project Structure
+## 🚀 Key Features
 
-- `src/`: Application source code (C)
-- `docs/images/`: Documentation and images
-  - `hardware/`: Photos of hardware components
-  - `webui/`: Screenshots of the web interface
-- `prj.conf`: Project configuration
-- `app.overlay`: DeviceTree overlays
+- **Multi-Sensor Fusion:** Real-time data collection from the onboard LSM6DS3TR-C IMU (Accelerometer & Gyroscope).
+- **Advanced Audio Processing:** PDM microphone integration with real-time RMS (Root Mean Square) calculation for sound level monitoring.
+- **Intelligent Power Management:** 
+  - Dynamic BLE TX Power adjustment based on battery SoC (State of Charge).
+  - Battery voltage monitoring with a Simple Moving Average (SMA) filter.
+  - Automatic charging status detection and charge current control.
+- **Visual Feedback:** Context-aware RGB LED logic (Startup sequences, audio-reactive level metering).
+- **Industrial-Grade BLE Service:** Custom 128-bit GATT service for synchronized data transmission.
+- **Modern Web Interface:** Integrated WebUI concept for live data visualization via Web Bluetooth API.
 
-## Images
+## 🛠 Hardware Architecture
 
-### Hardware
+- **Platform:** Seeed Studio XIAO nRF52840 Sense
+- **Microcontroller:** Nordic Semiconductor nRF52840 (ARM Cortex-M4F)
+- **Sensors:**
+  - **IMU:** LSM6DS3TR-C (6-Axis Accel/Gyro) via I2C.
+  - **Microphone:** Pulse Density Modulation (PDM) Mic.
+- **Connectivity:** Bluetooth 5.0 LE, USB CDC ACM (Serial Console).
+
+## 📂 Project Structure
+
+- `src/main.c`: Core application logic, thread management, and BLE service definitions.
+- `app.overlay`: Hardware abstraction layer and pin mapping.
+- `prj.conf`: Zephyr kernel and subsystem configuration.
+- `web_ui.html`: Live monitoring dashboard.
+- `docs/images/`:
+  - `hardware/`: Photos of the physical setup.
+  - `webui/`: Screenshots of the configuration interface.
+
+## 📸 Visual Documentation
+
+### Hardware Setup
 ![Hardware Setup](docs/images/hardware/setup.jpg)
-*(Placeholder for hardware photo)*
+*Place your XIAO Sense hardware photo here.*
 
 ### Web Interface
 ![Web UI Screenshot](docs/images/webui/screenshot.png)
-*(Placeholder for WebUI screenshot)*
+*View live sensor graphs and battery status in the web dashboard.*
 
-## Development
+## 💻 Software Technical Details
+
+### Threading Model
+The application utilizes Zephyr's preemptive multithreading:
+1. **Main Thread:** Handles system initialization and battery/power logic.
+2. **Audio Thread:** High-priority PDM sampling and RMS calculation.
+3. **Sensor Thread:** Synchronized IMU data fetching at 52Hz.
+
+### BLE GATT Service (Custom)
+- **Service UUID:** `12345678-1234-5678-1234-56789abcdef0`
+- **Characteristics:**
+  - `...f1`: Accelerometer Data (Notify)
+  - `...f2`: Gyroscope Data (Notify)
+  - `...f3`: Audio Level (Notify)
+  - `...f4`: TX Power Level (Read/Notify)
+  - `...f5`: Battery Status (Read/Notify)
+
+## 🔨 Development & Build
 
 ### Prerequisites
-- Zephyr SDK
-- nRF Connect SDK (if using Nordic hardware)
+- [nRF Connect SDK](https://www.nordicsemi.com/Products/Development-software/nrf-connect-sdk) (v2.x.x recommended)
+- [Zephyr RTOS](https://www.zephyrproject.org/) environment.
 
-### Build
-Use the `build.bat` or the standard Zephyr workflow:
+### Build Instructions
 ```bash
-west build -b <your_board>
+# Using west (Zephyr's meta-tool)
+west build -b xiao_ble_sense
 ```
 
-## Web UI
-The web interface is defined in `web_ui.html`. A concept can be found in `web_ui_concept.md`.
+## 📜 License
+This project is provided "as is" for educational and development purposes.
