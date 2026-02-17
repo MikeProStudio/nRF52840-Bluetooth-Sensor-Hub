@@ -1,4 +1,7 @@
-# nRF52840 Bluetooth Sensor Hub
+# nRF52840(-Sense) Bluetooth Sensor Hub
+ 
+<img src="https://github.com/user-attachments/assets/511be654-f444-4ab2-8e12-2eb7210b6b76" width="600">
+
 
 A professional-grade BLE (Bluetooth Low Energy) beacon and sensor monitoring application developed for the **Seeed Studio XIAO nRF52840 Sense**. Built on the **Zephyr RTOS**, this project demonstrates high-performance sensor data acquisition, real-time audio processing, and intelligent power management.
 
@@ -40,20 +43,30 @@ A professional-grade BLE (Bluetooth Low Energy) beacon and sensor monitoring app
 
 
 ### Web Interface
+<br>
 1. Pair the Bluetooth Device with your Browser Online by clicking "Initiate Tactical Uplink"
+<br>
+<br>
 
-<img width="1880" height="501" alt="image" src="https://github.com/user-attachments/assets/b3d4b0f9-e5e1-4ee7-8a7e-59152ee31883" />
+<img src="https://github.com/user-attachments/assets/b3d4b0f9-e5e1-4ee7-8a7e-59152ee31883" width="600">
 
+<br>
+<br>
 2. When connected you can view the Data online in your Browser:
+<br>
+<br>
 
-<img width="1650" height="1184" alt="image" src="https://github.com/user-attachments/assets/84708197-ca8a-4d86-9adb-92feb39d3839" />
+<img src="https://github.com/user-attachments/assets/84708197-ca8a-4d86-9adb-92feb39d3839" width="600">
 
+<br>
+<br>
 3. When the Battery-Level drops below a certain Level the Tx-Level will switch to lower Levels (instead of Highpower of +8 dBm)
+<br>
+<br>
 
-<img width="1685" height="901" alt="image" src="https://github.com/user-attachments/assets/12450a12-f951-4af6-bf7e-758c23e12ec8" />
+<img src="https://github.com/user-attachments/assets/12450a12-f951-4af6-bf7e-758c23e12ec8" width="600">
 
 
-*View live sensor graphs and battery status in the web dashboard.*
 
 ## 💻 Software Technical Details
 
