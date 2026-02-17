@@ -1,0 +1,11 @@
+# editors
+*.swp
+*~
+
+# build
+/build*/
+/zephyr/
+.cache/
+
+# images
+docs/images/

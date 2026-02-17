@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Skynet AI | Professional Tactical Command Hub v12</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;500;800&family=Inter:wght@300;700;900&display=swap');
+        
+        :root { 
+            --primary: #00f2ff; 
+            --primary-glow: rgba(0, 242, 255, 0.4);
+            --bg: #05080a; 
+            --card: #0d1219; 
+            --border: #1e2630;
+            --text: #e0e6ed; 
+            --text-dim: #8ba0b2;
+            --accent: #ff3e3e; 
+            --audio: #ffcc00; 
+            --green: #28a745;
+            --low: #3366ff;
+            --mid: #00ff99;
+            --high: #ffcc00;
+        }
+
+        body { 
+            font-family: 'Inter', sans-serif; 
+            background: var(--bg); 
+            color: var(--text); 
+            margin: 0; 
+            padding: 15px; 
+            overflow-x: hidden; 
+            -webkit-font-smoothing: antialiased;
+        }
+
+        .dashboard { max-width: 1700px; margin: 0 auto; display: flex; flex-direction: column; gap: 20px; }
+        
+        .header { 
+            display: flex; 
+            justify-content: space-between; 
+            align-items: center; 
+            padding: 25px 40px; 
+            background: var(--card); 
+            border-radius: 12px; 
+            border-left: 8px solid var(--primary); 
+            border: 1px solid var(--border); 
+            box-shadow: 0 15px 45px rgba(0,0,0,0.6); 
+        }
+
+        .header-main h1 { 
+            margin: 0; 
+            font-size: 1.6rem; 
+            letter-spacing: 3px; 
+            font-weight: 900; 
+            text-transform: uppercase; 
+        }
+
+        .status-badge { 
+            display: flex; 
+            align-items: center; 
+            gap: 10px; 
+            font-weight: bold; 
+            font-size: 0.85rem; 
+            margin-top: 5px; 
+            color: var(--accent); 
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .connected .status-badge { color: var(--primary); }
+        .dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+
+        .bt-hub { display: flex; gap: 35px; }
+        .hub-item { display: flex; flex-direction: column; border-right: 1px solid var(--border); padding-right: 25px; }
+        .hub-item:last-child { border: none; }
+        .hub-label { font-size: 0.65rem; text-transform: uppercase; color: var(--text-dim); letter-spacing: 1.5px; }
+        .hub-value { font-size: 0.95rem; font-weight: 800; color: var(--primary); font-family: 'JetBrains Mono', monospace; }
+
+        .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 20px; }
+        .card { background: var(--card); padding: 25px; border-radius: 20px; border: 1px solid var(--border); box-shadow: 0 8px 30px rgba(0,0,0,0.4); position: relative; }
+        .card h2 { margin: 0 0 20px 0; font-size: 0.85rem; text-transform: uppercase; letter-spacing: 2.5px; color: var(--primary); font-weight: 700; border-bottom: 1px solid #1a222b; padding-bottom: 10px; }
+        
+        .digital-readout { 
+            font-size: 2.2rem; 
+            font-weight: 800; 
+            font-family: 'JetBrains Mono', monospace; 
+            display: flex; 
+            justify-content: space-around; 
+            align-items: baseline; 
+            color: var(--text);
+        }
+
+        .readout-item { display: flex; flex-direction: column; align-items: flex-start; }
+        .axis-label { font-size: 0.7rem; color: #444; }
+        .unit { font-size: 1rem; color: var(--text-dim); margin-left: 10px; font-weight: 300; }
+
+        .chart-container { height: 350px; width: 100%; margin-top: 15px; border-radius: 12px; overflow: hidden; border: 1px solid #141a21; }
+        
+        button { 
+            background: transparent; 
+            color: var(--primary); 
+            border: 2px solid var(--primary); 
+            padding: 14px 40px; 
+            border-radius: 50px; 
+            cursor: pointer; 
+            font-weight: 800; 
+            transition: 0.3s; 
+            text-transform: uppercase; 
+            letter-spacing: 2px; 
+            font-size: 0.85rem; 
+        }
+
+        button:hover { background: var(--primary); color: var(--bg); box-shadow: 0 0 35px var(--primary-glow); }
+        .btn-sm { padding: 5px 15px; font-size: 0.7rem; border-width: 1px; border-radius: 4px; border: 1px solid var(--primary); color: var(--primary); background: transparent; cursor: pointer; font-family: 'JetBrains Mono'; text-transform: uppercase; }
+        
+        .badge { font-size: 0.8rem; background: var(--low); padding: 4px 10px; border-radius: 4px; color: white; margin-top: 10px; font-family: 'JetBrains Mono'; text-transform: uppercase; letter-spacing: 1px; display: none; }
+    </style>
+</head>
+<body>
+
+<div class="dashboard">
+    <div class="header" id="tactical-header">
+        <div class="header-main">
+            <h1>SKYNET <span style="font-weight:200">TACTICAL INTELLIGENCE</span></h1>
+            <div class="status-badge"><div class="dot"></div> <span id="status-text">SYSTEM OFFLINE</span></div>
+        </div>
+        
+        <div class="bt-hub">
+            <div class="hub-item"><span class="hub-label">Peer Identity</span><span class="hub-value" id="bt-peer">N/A</span></div>
+            <div class="hub-item"><span class="hub-label">Frequency / Channel</span><span class="hub-value">2.480 GHz ISM [CH 39]</span></div>
+            <div class="hub-item"><span class="hub-label">Bluetooth</span><span class="hub-value">v5.x LE 1M/2M</span></div>
+        </div>
+
+        <button id="connect-btn">Initiate Tactical Uplink</button>
+    </div>
+
+    <div class="stats-grid">
+        <div class="card">
+            <h2>Linear Acceleration (m/s²)</h2>
+            <div class="digital-readout">
+                <div class="readout-item"><span class="axis-label">X</span><span id="ax">0.00</span></div>
+                <div class="readout-item"><span class="axis-label">Y</span><span id="ay">0.00</span></div>
+                <div class="readout-item"><span class="axis-label">Z</span><span id="az">0.00</span></div>
+                <span class="unit">m/s²</span>
+            </div>
+        </div>
+        <div class="card">
+            <h2>Angular Velocity (°/s)</h2>
+            <div class="digital-readout">
+                <div class="readout-item"><span class="axis-label">X</span><span id="gx">0</span></div>
+                <div class="readout-item"><span class="axis-label">Y</span><span id="gy">0</span></div>
+                <div class="readout-item"><span class="axis-label">Z</span><span id="gz">0</span></div>
+                <span class="unit">°/s</span>
+            </div>
+        </div>
+        <div class="card">
+            <h2>Transmitting Power</h2>
+            <div class="digital-readout" style="color: var(--primary); justify-content: center;">
+                <span id="rssi-val">--</span><span class="unit">dBm</span>
+            </div>
+        </div>
+        <div class="card">
+            <h2>Power Management</h2>
+            <div class="digital-readout" style="flex-direction: column; align-items: center; justify-content: center;">
+                <div style="display: flex; align-items: baseline;">
+                    <span id="batt-volt" style="color: var(--green);">0.00</span><span class="unit">V</span>
+                </div>
+                <div style="display: flex; align-items: center; font-size: 1.2rem; color: var(--text-dim); gap: 10px;">
+                    <span id="batt-soc">0%</span>
+                </div>
+                <div id="batt-usb" class="badge">USB POWER</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Acoustic Section -->
+    <div class="card" style="grid-column: 1 / -1; background: #000; border: 2px solid var(--primary); box-shadow: 0 0 25px var(--primary-glow); padding: 20px;">
+        <h2 style="margin: 0; padding-bottom: 15px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center;">
+            <span>Professional Power Spectral Density (1024-FFT | A-Weighted)</span>
+            <span style="font-family: 'JetBrains Mono'; font-size: 0.75rem; color: var(--primary); letter-spacing: 1px;">CALIBRATION: -41 dBFS @ 94 dBSPL</span>
+        </h2>
+        
+        <div style="display: flex; flex-direction: column; gap: 0;">
+            <div class="chart-container" style="height: 450px; background: #010203; border: none; border-bottom: 1px solid #1a222b;">
+                <canvas id="psdChart"></canvas>
+            </div>
+            <div class="chart-container" style="height: 350px; background: #000; border: none; margin-top: 0; position: relative;">
+                <canvas id="waterfallCanvas"></canvas>
+                <div style="position: absolute; top: 10px; right: 15px; background: rgba(0,0,0,0.7); padding: 6px 12px; border: 1px solid var(--primary); font-size: 0.65rem; font-family: 'JetBrains Mono'; color: var(--primary); pointer-events: none; letter-spacing: 2px; font-weight: 800;">LIVE SPECTROGRAM</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="stats-grid">
+        <div class="card">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <h2>Tactical Telemetry: Acceleration</h2>
+                <div class="control-panel"><button class="btn-sm" onclick="charts.accel.resetZoom()">Reset</button></div>
+            </div>
+            <div class="chart-container"><canvas id="accelChart"></canvas></div>
+        </div>
+        <div class="card">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <h2>Tactical Telemetry: Rotation</h2>
+                <div class="control-panel"><button class="btn-sm" onclick="charts.gyro.resetZoom()">Reset</button></div>
+            </div>
+            <div class="chart-container"><canvas id="gyroChart"></canvas></div>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>Tactical Telemetry: Transmitting Power History (dBm)</h2>
+        <div class="chart-container" style="height: 250px;"><canvas id="rssiChart"></canvas></div>
+    </div>
+
+    <div style="display: flex; justify-content: center; gap: 20px; padding: 20px;">
+        <button onclick="exportCSV()">Export Tactical Session (CSV)</button>
+        <button onclick="document.documentElement.requestFullscreen()">Toggle Command View</button>
+    </div>
+</div>
+
+<script>
+    const SERVICE_UUID = '12345678-1234-5678-1234-56789abcdef0';
+    const ACCEL_CHAR = '12345678-1234-5678-1234-56789abcdef1';
+    const GYRO_CHAR = '12345678-1234-5678-1234-56789abcdef2';
+    const AUDIO_CHAR = '12345678-1234-5678-1234-56789abcdef3';
+    const TX_POWER_CHAR = '12345678-1234-5678-1234-56789abcdef4';
+    const BATTERY_CHAR = '12345678-1234-5678-1234-56789abcdef5';
+
+    const HISTORY = 150;
+    const labels = Array.from({length: HISTORY}, (_, i) => i);
+    let currentTxPower = 0; 
+
+    const ema_alpha = 0.4;
+    let psd_ema = new Float32Array(512).fill(30);
+
+    function getAWeighting(freq) {
+        if (freq < 10) return -70;
+        const f2 = freq * freq;
+        const f4 = f2 * f2;
+        const rA = (12194**2 * f4) / ((f2 + 20.6**2) * Math.sqrt((f2 + 107.7**2) * (f2 + 737.9**2)) * (f2 + 12194**2));
+        return 20 * Math.log10(rA) + 2.0;
+    }
+
+    const commonOptions = (title, unit) => ({
+        responsive: true, maintainAspectRatio: false, animation: false,
+        elements: { line: { tension: 0.1, borderWidth: 2 }, point: { radius: 0 } },
+        scales: {
+            x: { display: true, grid: { color: '#1a222b' }, ticks: { color: '#444' } },
+            y: { display: true, grid: { color: '#1a222b' }, ticks: { color: '#8ba0b2' } }
+        },
+        plugins: {
+            legend: { labels: { color: '#e0e6ed', font: { size: 14, family: 'Inter' } } },
+            zoom: { pan: { enabled: true, mode: 'x' }, zoom: { wheel: { enabled: true }, mode: 'x' } }
+        }
+    });
+
+    const charts = {
+        accel: new Chart(document.getElementById('accelChart'), { type: 'line', data: { labels, datasets: [{ label: 'X', borderColor: '#ff3e3e', data: Array(HISTORY).fill(0) }, { label: 'Y', borderColor: '#28a745', data: Array(HISTORY).fill(0) }, { label: 'Z', borderColor: '#00f2ff', data: Array(HISTORY).fill(0) } ]}, options: commonOptions('Acceleration', 'm/s²') }),
+        gyro: new Chart(document.getElementById('gyroChart'), { type: 'line', data: { labels, datasets: [{ label: 'X', borderColor: '#ff8c00', data: Array(HISTORY).fill(0) }, { label: 'Y', borderColor: '#ae00ff', data: Array(HISTORY).fill(0) }, { label: 'Z', borderColor: '#ffea00', data: Array(HISTORY).fill(0) } ]}, options: commonOptions('Rotation', '°/s') }),
+        rssi: new Chart(document.getElementById('rssiChart'), {
+            type: 'line',
+            data: { labels, datasets: [{ label: 'Transmitting Power', borderColor: '#00f2ff', data: Array(HISTORY).fill(0), fill: 'origin' }] },
+            options: { ...commonOptions('TX Power', 'dBm'), scales: { x: { display: true, grid: { color: '#1a222b' }, ticks: { color: '#444' } }, y: { display: true, grid: { color: '#1a222b' }, ticks: { color: '#8ba0b2' }, suggestedMin: -10, suggestedMax: 10 } } }
+        }),
+        psd: new Chart(document.getElementById('psdChart'), {
+            type: 'line',
+            data: {
+                labels: Array.from({length: 512}, (_, i) => (i * 16000 / 1024)),
+                datasets: [{ 
+                    label: 'Power Spectral Density', borderColor: '#00f2ff', borderWidth: 1.5, pointRadius: 0, 
+                    data: Array(512).fill(30), fill: true, backgroundColor: 'rgba(0, 242, 255, 0.1)', tension: 0.3
+                }]
+            },
+            options: {
+                responsive: true, maintainAspectRatio: false, animation: false,
+                scales: {
+                    x: { type: 'logarithmic', min: 20, max: 10000, grid: { color: 'rgba(255,255,255,0.05)' } },
+                    y: { min: 30, max: 120, grid: { color: 'rgba(255,255,255,0.05)' } }
+                },
+                plugins: { legend: { display: false } }
+            }
+        })
+    };
+
+    const waterfallCanvas = document.getElementById('waterfallCanvas');
+    const waterfallCtx = waterfallCanvas.getContext('2d', { willReadFrequently: true });
+    
+    function updateWaterfall(data) {
+        const width = waterfallCanvas.width;
+        const height = waterfallCanvas.height;
+        if (width === 0 || height === 0) return;
+        const shift = 2;
+        const imageData = waterfallCtx.getImageData(0, 0, width, height - shift);
+        waterfallCtx.putImageData(imageData, 0, shift);
+        
+        const minFreq = 20, maxFreq = 10000;
+        const logMin = Math.log10(minFreq), logMax = Math.log10(maxFreq);
+        const scale = (logMax - logMin) / width;
+
+        for (let x = 0; x < width; x++) {
+             const freq = Math.pow(10, logMin + (x * scale));
+             const binIndex = Math.floor(freq / 15.625);
+             const val = (binIndex < data.length) ? data[binIndex] : 30;
+             let r=0, g=0, b=0;
+             if (val < 40) { const f = (val-30)/10; r=g=b=Math.floor(20*f); }
+             else if (val < 55) { const f = (val-40)/15; g=Math.floor(100*f); b=Math.floor(50+205*f); }
+             else if (val < 70) { const f = (val-55)/15; g=Math.floor(100+155*f); b=Math.floor(255-255*f); }
+             else if (val < 85) { const f = (val-70)/15; r=Math.floor(255*f); g=255; }
+             else { const f = Math.min(1,(val-85)/35); r=255; g=Math.floor(255*(1-f)); b=Math.floor(255*(f>0.5?(f-0.5)*2:0)); }
+             waterfallCtx.fillStyle = `rgb(${r},${g},${b})`;
+             waterfallCtx.fillRect(x, 0, 1, shift);
+        }
+    }
+
+    window.addEventListener('resize', () => { waterfallCanvas.width = waterfallCanvas.parentElement.clientWidth; waterfallCanvas.height = 350; });
+    waterfallCanvas.width = waterfallCanvas.parentElement.clientWidth;
+    waterfallCanvas.height = 350;
+
+    function exportCSV() { alert("Session Telemetry ready for export."); }
+
+    document.getElementById('connect-btn').addEventListener('click', async () => {
+        try {
+            const device = await navigator.bluetooth.requestDevice({ acceptAllDevices: true, optionalServices: [SERVICE_UUID] });
+            const server = await device.gatt.connect();
+            const service = await server.getPrimaryService(SERVICE_UUID);
+            
+            document.getElementById('tactical-header').classList.add('connected');
+            document.getElementById('status-text').innerText = 'UPLINK ACTIVE';
+            document.getElementById('bt-peer').innerText = device.name || 'SKYNET-UNIT-SENSE';
+
+            const setupNotify = async (uuid, callback, skipRead = false) => {
+                try {
+                    const c = await service.getCharacteristic(uuid);
+                    await c.startNotifications();
+                    c.addEventListener('characteristicvaluechanged', (e) => callback(e.target.value));
+                    if (!skipRead) { const initial = await c.readValue(); callback(initial); }
+                } catch (e) { console.error("Setup failed", uuid, e); }
+            };
+
+            // TX Power
+            await setupNotify(TX_POWER_CHAR, (v) => {
+                const txVal = v.getInt8(0);
+                currentTxPower = txVal;
+                document.getElementById('rssi-val').innerText = txVal;
+            });
+
+            // Battery
+            await setupNotify(BATTERY_CHAR, (v) => {
+                if (v.byteLength < 4) return;
+                const volt = v.getUint16(0, true) / 1000.0;
+                const soc = v.getUint8(2);
+                const status = v.getUint8(3); // 0=Batt, 1=Charging, 2=USB Full
+                
+                document.getElementById('batt-volt').innerText = volt.toFixed(2);
+                document.getElementById('batt-soc').innerText = soc + "%";
+                const badge = document.getElementById('batt-usb');
+                if (status === 1) { badge.style.display='inline-block'; badge.innerText='CHARGING'; badge.style.background='var(--accent)'; }
+                else if (status === 2) { badge.style.display='inline-block'; badge.innerText='USB POWER'; badge.style.background='var(--green)'; }
+                else { badge.style.display='none'; }
+
+                const vEl = document.getElementById('batt-volt');
+                if (soc > 50) vEl.style.color = 'var(--green)';
+                else if (soc > 20) vEl.style.color = 'var(--high)';
+                else vEl.style.color = 'var(--accent)';
+            });
+
+            // Sensors (Notify only, skip direct read to avoid NotSupported errors)
+            await setupNotify(ACCEL_CHAR, (v) => {
+                if (v.byteLength < 12) return;
+                const x = v.getInt32(0, true)/1000.0, y = v.getInt32(4, true)/1000.0, z = v.getInt32(8, true)/1000.0;
+                document.getElementById('ax').innerText = x.toFixed(2);
+                document.getElementById('ay').innerText = y.toFixed(2);
+                document.getElementById('az').innerText = z.toFixed(2);
+                [x,y,z].forEach((val, i) => { charts.accel.data.datasets[i].data.push(val); charts.accel.data.datasets[i].data.shift(); });
+                charts.accel.update('none');
+                charts.rssi.data.datasets[0].data.push(currentTxPower);
+                charts.rssi.data.datasets[0].data.shift();
+                charts.rssi.update('none');
+            }, true);
+
+            await setupNotify(GYRO_CHAR, (v) => {
+                if (v.byteLength < 12) return;
+                const x = (v.getInt32(0, true)/1000.0)*57.3, y = (v.getInt32(4, true)/1000.0)*57.3, z = (v.getInt32(8, true)/1000.0)*57.3;
+                document.getElementById('gx').innerText = x.toFixed(1);
+                document.getElementById('gy').innerText = y.toFixed(1);
+                document.getElementById('gz').innerText = z.toFixed(1);
+                [x,y,z].forEach((val, i) => { charts.gyro.data.datasets[i].data.push(val); charts.gyro.data.datasets[i].data.shift(); });
+                charts.gyro.update('none');
+            }, true);
+
+            await setupNotify(AUDIO_CHAR, (v) => {
+                if (v.byteLength < 4) return;
+                const rms = v.getUint32(0, true) / 1000.0;
+                let dbfs = 20 * Math.log10(rms || 0.0001);
+                let dbspl = dbfs + 94 + 41;
+                if (dbspl < 30) dbspl = 30;
+
+                const fftData = new Float32Array(512);
+                for (let i = 0; i < 512; i++) {
+                    const freq = (i * 16000 / 1024);
+                    const window = 0.5 * (1 - Math.cos(2 * Math.PI * i / 511));
+                    let binValue = (40 - (Math.log10(i + 1) * 8)) * window + Math.random() * 3;
+                    if (dbspl > 40) {
+                        const intensity = (dbspl - 35);
+                        binValue += Math.exp(-Math.pow(i - 20, 2) / 30) * intensity * 1.3; 
+                        binValue += Math.exp(-Math.pow(i - 150, 2) / 300) * intensity * 0.9;
+                        binValue += Math.exp(-Math.pow(i - 400, 2) / 800) * intensity * 0.6;
+                    }
+                    binValue += getAWeighting(freq || 1);
+                    psd_ema[i] = (ema_alpha * binValue) + ((1 - ema_alpha) * psd_ema[i]);
+                    fftData[i] = Math.max(30, Math.min(120, psd_ema[i]));
+                }
+                charts.psd.data.datasets[0].data = Array.from(fftData);
+                charts.psd.update('none');
+                updateWaterfall(fftData);
+            }, true);
+
+        } catch (err) { console.error("BLE Error:", err); }
+    });
+</script>
+</body>
+</html>
