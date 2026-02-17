@@ -36,11 +36,23 @@ A professional-grade BLE (Bluetooth Low Energy) beacon and sensor monitoring app
 ## 📸 Visual Documentation
 
 ### Hardware Setup
-![Hardware Setup](docs/images/hardware/setup.jpg)
-*Place your XIAO Sense hardware photo here.*
+<img src="https://github.com/user-attachments/assets/68a228c7-4f74-4885-9130-ee3c02ecdf7c" alt="Hardware Setup" width="200">
+
 
 ### Web Interface
-![Web UI Screenshot](docs/images/webui/screenshot.png)
+1. Pair the Bluetooth Device with your Browser Online by clicking "Initiate Tactical Uplink"
+
+<img width="1880" height="501" alt="image" src="https://github.com/user-attachments/assets/b3d4b0f9-e5e1-4ee7-8a7e-59152ee31883" />
+
+2. When connected you can view the Data online in your Browser:
+
+<img width="1650" height="1184" alt="image" src="https://github.com/user-attachments/assets/84708197-ca8a-4d86-9adb-92feb39d3839" />
+
+3. When the Battery-Level drops below a certain Level the Tx-Level will switch to lower Levels (instead of Highpower of +8 dBm)
+
+<img width="1685" height="901" alt="image" src="https://github.com/user-attachments/assets/12450a12-f951-4af6-bf7e-758c23e12ec8" />
+
+
 *View live sensor graphs and battery status in the web dashboard.*
 
 ## 💻 Software Technical Details
@@ -49,21 +61,26 @@ A professional-grade BLE (Bluetooth Low Energy) beacon and sensor monitoring app
 The application utilizes Zephyr's preemptive multithreading:
 1. **Main Thread:** Handles system initialization and battery/power logic.
 2. **Audio Thread:** High-priority PDM sampling and RMS calculation.
+Fun Gimmic: The RGB LED reacts on the Loudness directly on the Board from Quiet to Loud: Blue->Green->Red
+<img src="https://github.com/user-attachments/assets/f94b9513-0fe7-49ea-8a32-3d8c6edf9d87" width="200">
+
+
 3. **Sensor Thread:** Synchronized IMU data fetching at 52Hz.
 
 ### BLE GATT Service (Custom)
 - **Service UUID:** `12345678-1234-5678-1234-56789abcdef0`
 - **Characteristics:**
-  - `...f1`: Accelerometer Data (Notify)
-  - `...f2`: Gyroscope Data (Notify)
-  - `...f3`: Audio Level (Notify)
-  - `...f4`: TX Power Level (Read/Notify)
-  - `...f5`: Battery Status (Read/Notify)
+  - `...56789abcdef1`: Accelerometer Data (Notify)
+  - `...56789abcdef2`: Gyroscope Data (Notify)
+  - `...56789abcdef3`: Audio Level (Notify)
+  - `...56789abcdef4`: TX Power Level (Read/Notify)
+  - `...56789abcdef5`: Battery Status (Read/Notify)
 
 ## 🔨 Development & Build
 
 ### Prerequisites
-- [nRF Connect SDK](https://www.nordicsemi.com/Products/Development-software/nrf-connect-sdk) (v2.x.x recommended)
+- [nRF Connect SDK](https://www.nordicsemi.com/Products/Development-software/nrf-connect-sdk) (v3.2.2 recommended)
+- [nRF Connect for VS Code Extension Pack](https://www.nordicsemi.com/Products/Development-tools/nRF-Connect-for-VS-Code)
 - [Zephyr RTOS](https://www.zephyrproject.org/) environment.
 
 ### Build Instructions
@@ -71,6 +88,8 @@ The application utilizes Zephyr's preemptive multithreading:
 # Using west (Zephyr's meta-tool)
 west build -b xiao_ble_sense
 ```
+If you want to flash via Windows Explorer: Take the zephyr.uf2 from the zephyr folder and double-tap the RST Button on the nRF52840 Board for USB-Massstorage Option. Copy & Past and the nRF will restart into Application.
+RGB LED Sequenz at Bootup will visualize when the Application is ready.
 
 ## 📜 License
 This project is provided "as is" for educational and development purposes.
