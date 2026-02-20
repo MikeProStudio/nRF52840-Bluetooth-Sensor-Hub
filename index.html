@@ -79,22 +79,26 @@
         .hub-value { font-size: 0.95rem; font-weight: 800; color: var(--primary); font-family: 'JetBrains Mono', monospace; }
 
         .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 20px; }
-        .card { background: var(--card); padding: 25px; border-radius: 20px; border: 1px solid var(--border); box-shadow: 0 8px 30px rgba(0,0,0,0.4); position: relative; }
-        .card h2 { margin: 0 0 20px 0; font-size: 0.85rem; text-transform: uppercase; letter-spacing: 2.5px; color: var(--primary); font-weight: 700; border-bottom: 1px solid #1a222b; padding-bottom: 10px; }
+        .card { background: var(--card); padding: 15px 25px; border-radius: 20px; border: 1px solid var(--border); box-shadow: 0 8px 30px rgba(0,0,0,0.4); position: relative; min-height: 160px; display: flex; flex-direction: column; }
+        .card h2 { margin: 0 0 10px 0; font-size: 0.85rem; text-transform: uppercase; letter-spacing: 2.5px; color: var(--primary); font-weight: 700; border-bottom: 1px solid #1a222b; padding-bottom: 8px; }
         
-        .digital-readout { 
-            font-size: 2.2rem; 
-            font-weight: 800; 
-            font-family: 'JetBrains Mono', monospace; 
-            display: flex; 
-            justify-content: space-around; 
-            align-items: baseline; 
+        .info-row-top { display: flex; justify-content: space-around; align-items: center; width: 100%; height: 30px; margin-bottom: 5px; font-family: 'JetBrains Mono'; font-size: 0.9rem; font-weight: 800; color: var(--text-dim); }
+        
+        .digital-readout {
+            font-size: 2.1rem;
+            font-weight: 800;
+            font-family: 'JetBrains Mono', monospace;
+            display: flex;
+            justify-content: space-around;
+            align-items: center;
             color: var(--text);
+            gap: 20px;
+            flex-grow: 1;
         }
 
-        .readout-item { display: flex; flex-direction: column; align-items: flex-start; }
-        .axis-label { font-size: 0.7rem; color: #444; }
-        .unit { font-size: 1rem; color: var(--text-dim); margin-left: 10px; font-weight: 300; }
+        .readout-item { display: flex; flex-direction: column; align-items: center; min-width: 75px; }
+        .unit-row { width: 100%; text-align: center; margin-top: 10px; font-size: 1rem; color: var(--text-dim); font-family: 'JetBrains Mono'; letter-spacing: 2px; font-weight: 800; }
+        .unit { font-size: 1.4rem; color: var(--text-dim); font-weight: 700; margin-left: 8px; }
 
         .chart-container { height: 350px; width: 100%; margin-top: 15px; border-radius: 12px; overflow: hidden; border: 1px solid #141a21; }
         
@@ -113,7 +117,12 @@
         }
 
         button:hover { background: var(--primary); color: var(--bg); box-shadow: 0 0 35px var(--primary-glow); }
+        button.disconnect { border-color: var(--accent); color: var(--accent); }
+        button.disconnect:hover { background: var(--accent); color: white; box-shadow: 0 0 35px rgba(255, 62, 62, 0.4); }
+        
         .btn-sm { padding: 5px 15px; font-size: 0.7rem; border-width: 1px; border-radius: 4px; border: 1px solid var(--primary); color: var(--primary); background: transparent; cursor: pointer; font-family: 'JetBrains Mono'; text-transform: uppercase; }
+        .btn-danger { border-color: #ff3e3e; color: #ff3e3e; margin-top: 15px; font-size: 0.7rem; padding: 10px 25px; opacity: 0.7; }
+        .btn-danger:hover { background: #ff3e3e; color: white; opacity: 1; }
         
         .badge { font-size: 0.8rem; background: var(--low); padding: 4px 10px; border-radius: 4px; color: white; margin-top: 10px; font-family: 'JetBrains Mono'; text-transform: uppercase; letter-spacing: 1px; display: none; }
     </style>
@@ -133,45 +142,63 @@
             <div class="hub-item"><span class="hub-label">Bluetooth</span><span class="hub-value">v5.x LE 1M/2M</span></div>
         </div>
 
-        <button id="connect-btn">Initiate Tactical Uplink</button>
+        <div style="display: flex; flex-direction: column; align-items: center; gap: 10px;">
+            <button id="connect-btn">Initiate Tactical Uplink</button>
+            <button id="reset-btn" class="btn-danger" style="display: none;">DANGER: RESET TO BOOTLOADER</button>
+        </div>
     </div>
 
     <div class="stats-grid">
         <div class="card">
-            <h2>Linear Acceleration (m/s²)</h2>
-            <div class="digital-readout">
-                <div class="readout-item"><span class="axis-label">X</span><span id="ax">0.00</span></div>
-                <div class="readout-item"><span class="axis-label">Y</span><span id="ay">0.00</span></div>
-                <div class="readout-item"><span class="axis-label">Z</span><span id="az">0.00</span></div>
-                <span class="unit">m/s²</span>
+            <h2>Linear Acceleration</h2>
+            <div class="info-row-top">
+                <div style="min-width:75px; text-align:center;">X</div>
+                <div style="min-width:75px; text-align:center;">Y</div>
+                <div style="min-width:75px; text-align:center;">Z</div>
             </div>
+            <div class="digital-readout">
+                <div class="readout-item"><span id="ax">0.00</span></div>
+                <div class="readout-item"><span id="ay">0.00</span></div>
+                <div class="readout-item"><span id="az">0.00</span></div>
+            </div>
+            <div class="unit-row">m/s²</div>
         </div>
         <div class="card">
-            <h2>Angular Velocity (°/s)</h2>
-            <div class="digital-readout">
-                <div class="readout-item"><span class="axis-label">X</span><span id="gx">0</span></div>
-                <div class="readout-item"><span class="axis-label">Y</span><span id="gy">0</span></div>
-                <div class="readout-item"><span class="axis-label">Z</span><span id="gz">0</span></div>
-                <span class="unit">°/s</span>
+            <h2>Angular Velocity</h2>
+            <div class="info-row-top">
+                <div style="min-width:75px; text-align:center;">X</div>
+                <div style="min-width:75px; text-align:center;">Y</div>
+                <div style="min-width:75px; text-align:center;">Z</div>
             </div>
+            <div class="digital-readout">
+                <div class="readout-item"><span id="gx">0</span></div>
+                <div class="readout-item"><span id="gy">0</span></div>
+                <div class="readout-item"><span id="gz">0</span></div>
+            </div>
+            <div class="unit-row">°/s</div>
         </div>
         <div class="card">
             <h2>Transmitting Power</h2>
-            <div class="digital-readout" style="color: var(--primary); justify-content: center;">
+            <div class="info-row-top">
+                <div style="width:100%; text-align:center;">EFFICIENCY: <span id="tx-pcnt">--</span>%</div>
+            </div>
+            <div class="digital-readout" style="color: var(--primary);">
                 <span id="rssi-val">--</span><span class="unit">dBm</span>
             </div>
+            <div class="unit-row"><span id="tx-mw">--</span> mW | <span id="tx-status" style="color: var(--primary);">HIGH POWER</span></div>
         </div>
         <div class="card">
             <h2>Power Management</h2>
-            <div class="digital-readout" style="flex-direction: column; align-items: center; justify-content: center;">
+            <div class="info-row-top">
+                <div style="width:100%; text-align:center;">BATTERY STATUS</div>
+            </div>
+            <div class="digital-readout" style="flex-direction: column; gap: 5px;">
                 <div style="display: flex; align-items: baseline;">
                     <span id="batt-volt" style="color: var(--green);">0.00</span><span class="unit">V</span>
                 </div>
-                <div style="display: flex; align-items: center; font-size: 1.2rem; color: var(--text-dim); gap: 10px;">
-                    <span id="batt-soc">0%</span>
-                </div>
-                <div id="batt-usb" class="badge">USB POWER</div>
+                <div style="font-size: 1.2rem; color: var(--text-dim);"><span id="batt-soc">0%</span></div>
             </div>
+            <div class="unit-row" style="margin-top: 5px;"><div id="batt-usb" class="badge" style="margin:0; position:relative; top:-2px;">USB POWER</div></div>
         </div>
     </div>
 
@@ -210,10 +237,6 @@
         </div>
     </div>
 
-    <div class="card">
-        <h2>Tactical Telemetry: Transmitting Power History (dBm)</h2>
-        <div class="chart-container" style="height: 250px;"><canvas id="rssiChart"></canvas></div>
-    </div>
 
     <div style="display: flex; justify-content: center; gap: 20px; padding: 20px;">
         <button onclick="exportCSV()">Export Tactical Session (CSV)</button>
@@ -228,10 +251,18 @@
     const AUDIO_CHAR = '12345678-1234-5678-1234-56789abcdef3';
     const TX_POWER_CHAR = '12345678-1234-5678-1234-56789abcdef4';
     const BATTERY_CHAR = '12345678-1234-5678-1234-56789abcdef5';
+    const RESET_CHAR = '12345678-1234-5678-1234-56789abcdef6';
 
     const HISTORY = 150;
     const labels = Array.from({length: HISTORY}, (_, i) => i);
-    let currentTxPower = 0; 
+    let currentTxPower = 0;
+
+    // --- Performance / Senior Dev Architecture ---
+    let lastPsdData = null;
+    let isPageVisible = true;
+    let animationFrameId = null;
+    let lastRenderTime = 0;
+    const RENDER_FPS_LIMIT = 30; // Begrenzung für Chart.js um CPU zu schonen
 
     const ema_alpha = 0.4;
     let psd_ema = new Float32Array(512).fill(30);
@@ -258,13 +289,8 @@
     });
 
     const charts = {
-        accel: new Chart(document.getElementById('accelChart'), { type: 'line', data: { labels, datasets: [{ label: 'X', borderColor: '#ff3e3e', data: Array(HISTORY).fill(0) }, { label: 'Y', borderColor: '#28a745', data: Array(HISTORY).fill(0) }, { label: 'Z', borderColor: '#00f2ff', data: Array(HISTORY).fill(0) } ]}, options: commonOptions('Acceleration', 'm/s²') }),
-        gyro: new Chart(document.getElementById('gyroChart'), { type: 'line', data: { labels, datasets: [{ label: 'X', borderColor: '#ff8c00', data: Array(HISTORY).fill(0) }, { label: 'Y', borderColor: '#ae00ff', data: Array(HISTORY).fill(0) }, { label: 'Z', borderColor: '#ffea00', data: Array(HISTORY).fill(0) } ]}, options: commonOptions('Rotation', '°/s') }),
-        rssi: new Chart(document.getElementById('rssiChart'), {
-            type: 'line',
-            data: { labels, datasets: [{ label: 'Transmitting Power', borderColor: '#00f2ff', data: Array(HISTORY).fill(0), fill: 'origin' }] },
-            options: { ...commonOptions('TX Power', 'dBm'), scales: { x: { display: true, grid: { color: '#1a222b' }, ticks: { color: '#444' } }, y: { display: true, grid: { color: '#1a222b' }, ticks: { color: '#8ba0b2' }, suggestedMin: -10, suggestedMax: 10 } } }
-        }),
+        accel: new Chart(document.getElementById('accelChart'), { type: 'line', data: { labels, datasets: [{ label: 'X (m/s²)', borderColor: '#ff3e3e', data: Array(HISTORY).fill(0) }, { label: 'Y (m/s²)', borderColor: '#28a745', data: Array(HISTORY).fill(0) }, { label: 'Z (m/s²)', borderColor: '#00f2ff', data: Array(HISTORY).fill(0) } ]}, options: commonOptions('Acceleration', 'm/s²') }),
+        gyro: new Chart(document.getElementById('gyroChart'), { type: 'line', data: { labels, datasets: [{ label: 'X (°/s)', borderColor: '#ff8c00', data: Array(HISTORY).fill(0) }, { label: 'Y (°/s)', borderColor: '#ae00ff', data: Array(HISTORY).fill(0) }, { label: 'Z (°/s)', borderColor: '#ffea00', data: Array(HISTORY).fill(0) } ]}, options: commonOptions('Rotation', '°/s') }),
         psd: new Chart(document.getElementById('psdChart'), {
             type: 'line',
             data: {
@@ -315,60 +341,224 @@
         }
     }
 
-    window.addEventListener('resize', () => { waterfallCanvas.width = waterfallCanvas.parentElement.clientWidth; waterfallCanvas.height = 350; });
-    waterfallCanvas.width = waterfallCanvas.parentElement.clientWidth;
+    window.addEventListener('resize', () => {
+        if (!waterfallCanvas.parentElement) return;
+        waterfallCanvas.width = waterfallCanvas.parentElement.clientWidth;
+        waterfallCanvas.height = 350;
+    });
+    waterfallCanvas.width = waterfallCanvas.parentElement.clientWidth || 800;
     waterfallCanvas.height = 350;
+
+    // --- High Performance Render Loop ---
+    function startRenderLoop() {
+        const frame = (time) => {
+            if (!isPageVisible) return;
+
+            // Drosselung des Renderings für Chart.js
+            if (time - lastRenderTime > (1000 / RENDER_FPS_LIMIT)) {
+                if (lastPsdData) {
+                    charts.psd.data.datasets[0].data = Array.from(lastPsdData);
+                    charts.psd.update('none');
+                    updateWaterfall(lastPsdData);
+                    lastPsdData = null; // Buffer geleert
+                }
+                lastRenderTime = time;
+            }
+            animationFrameId = requestAnimationFrame(frame);
+        };
+        animationFrameId = requestAnimationFrame(frame);
+    }
+
+    function stopRenderLoop() {
+        if (animationFrameId) {
+            cancelAnimationFrame(animationFrameId);
+            animationFrameId = null;
+        }
+    }
+
+    // Visibility API: Schutz vor Overload bei minimiertem Tab
+    document.addEventListener('visibilitychange', () => {
+        isPageVisible = !document.hidden;
+        if (isPageVisible) {
+            console.log("Senior-UI: Tab active, resuming render loop...");
+            startRenderLoop();
+        } else {
+            console.log("Senior-UI: Tab hidden, suspending render loop to save resources.");
+            stopRenderLoop();
+        }
+    });
 
     function exportCSV() { alert("Session Telemetry ready for export."); }
 
+    let bluetoothDevice = null;
+    let bluetoothServer = null;
+
+    async function disconnectDevice() {
+        if (bluetoothDevice) {
+            console.log("Senior-UI: Explicitly disconnecting GATT server...");
+            try {
+                // GATT Disconnect triggert 'gattserverdisconnected' Event
+                bluetoothDevice.gatt.disconnect();
+            } catch (e) { console.log("Senior-UI: Disconnect error", e); }
+        }
+        // Falls das Event nicht feuert, führen wir den Cleanup manuell durch
+        setTimeout(() => { if (bluetoothDevice) onDisconnected(); }, 500);
+    }
+
+    function onDisconnected() {
+        console.log("Senior-UI: Global Disconnect Event fired.");
+        
+        // Reset ALL data fields to signal dead connection
+        const ids = ['ax', 'ay', 'az', 'gx', 'gy', 'gz', 'rssi-val', 'batt-volt', 'batt-soc', 'tx-pcnt', 'tx-mw'];
+        ids.forEach(id => { const el = document.getElementById(id); if (el) el.innerText = '--'; });
+        
+        document.getElementById('tactical-header').classList.remove('connected');
+        document.getElementById('status-text').innerText = 'SYSTEM OFFLINE';
+        document.getElementById('bt-peer').innerText = 'N/A';
+        const btn = document.getElementById('connect-btn');
+        btn.innerText = 'Initiate Tactical Uplink';
+        btn.classList.remove('disconnect');
+        document.getElementById('reset-btn').style.display = 'none';
+        
+        // SENIOR-DEV: Full State Reset & Memory Cleanup
+        stopRenderLoop();
+        if (bluetoothDevice) {
+            try {
+                bluetoothDevice.removeEventListener('gattserverdisconnected', onDisconnected);
+            } catch(e) {}
+        }
+        
+        // WICHTIG: Bluetooth-Objekte komplett zerstören für GC
+        bluetoothDevice = null;
+        bluetoothServer = null;
+        window.currentBLEService = null;
+    }
+
     document.getElementById('connect-btn').addEventListener('click', async () => {
+        const btn = document.getElementById('connect-btn');
+        if (btn.classList.contains('disconnect')) {
+            await disconnectDevice();
+            return;
+        }
+
         try {
-            const device = await navigator.bluetooth.requestDevice({ acceptAllDevices: true, optionalServices: [SERVICE_UUID] });
-            const server = await device.gatt.connect();
-            const service = await server.getPrimaryService(SERVICE_UUID);
+            // SENIOR-DEV: Vor jedem neuen Scan ALLES nullen
+            if (bluetoothDevice && bluetoothDevice.gatt.connected) {
+                bluetoothDevice.gatt.disconnect();
+            }
+            bluetoothDevice = null;
+            bluetoothServer = null;
+
+            console.log("Senior-UI: Requesting fresh Bluetooth Device...");
+            bluetoothDevice = await navigator.bluetooth.requestDevice({
+                acceptAllDevices: true,
+                optionalServices: [SERVICE_UUID]
+            });
+            
+            bluetoothDevice.addEventListener('gattserverdisconnected', onDisconnected);
+            
+            console.log("Senior-UI: Initiating GATT Handshake...");
+            bluetoothServer = await bluetoothDevice.gatt.connect();
+            
+            console.log("Senior-UI: Discovery of Primary Service...");
+            const service = await bluetoothServer.getPrimaryService(SERVICE_UUID);
+            window.currentBLEService = service;
             
             document.getElementById('tactical-header').classList.add('connected');
             document.getElementById('status-text').innerText = 'UPLINK ACTIVE';
-            document.getElementById('bt-peer').innerText = device.name || 'SKYNET-UNIT-SENSE';
+            document.getElementById('bt-peer').innerText = bluetoothDevice.name || 'SKYNET-UNIT-SENSE';
+            
+            btn.innerText = 'Disconnect Tactical Uplink';
+            btn.classList.add('disconnect');
+            document.getElementById('reset-btn').style.display = 'block';
 
+            // SENIOR-DEV: Sequential Setup to allow UI time for PIN pairing
             const setupNotify = async (uuid, callback, skipRead = false) => {
                 try {
+                    console.log(`Senior-UI: Configuring ${uuid}...`);
                     const c = await service.getCharacteristic(uuid);
                     await c.startNotifications();
                     c.addEventListener('characteristicvaluechanged', (e) => callback(e.target.value));
-                    if (!skipRead) { const initial = await c.readValue(); callback(initial); }
-                } catch (e) { console.error("Setup failed", uuid, e); }
+                    if (!skipRead) {
+                        // Wir warten kurz, falls der Browser noch mit der Authentifizierung beschäftigt ist
+                        await new Promise(r => setTimeout(r, 200));
+                        const initial = await c.readValue();
+                        callback(initial);
+                    }
+                    return true;
+                } catch (e) {
+                    console.error("Setup failed", uuid, e);
+                    return false;
+                }
             };
 
-            // TX Power
-            await setupNotify(TX_POWER_CHAR, (v) => {
+            // SENIOR-DEV: Authentifizierungs-Retry Logic
+            const secureSetupNotify = async (uuid, callback, skipRead = false) => {
+                let success = false;
+                let retries = 3;
+                while (!success && retries > 0) {
+                    success = await setupNotify(uuid, callback, skipRead);
+                    if (!success) {
+                        console.log(`Senior-UI: Auth delay, retrying ${uuid} in 3s... (${retries} left)`);
+                        await new Promise(r => setTimeout(r, 3000));
+                        retries--;
+                    }
+                }
+                return success;
+            };
+
+            // Wartezeit für den PIN Dialog (Betriebssystem braucht Zeit zum Aufpoppen)
+            console.log("Senior-UI: Waiting for security handshake...");
+            await new Promise(r => setTimeout(r, 4000));
+
+            // Sequentielles Setup mit Auth-Retries
+            await secureSetupNotify(TX_POWER_CHAR, (v) => {
                 const txVal = v.getInt8(0);
                 currentTxPower = txVal;
                 document.getElementById('rssi-val').innerText = txVal;
+                
+                // Umrechnung dBm zu mW: P(mW) = 10^(P(dBm)/10)
+                const mw = Math.pow(10, txVal / 10).toFixed(2);
+                document.getElementById('tx-mw').innerText = mw;
+                
+                // Prozent von Max (8dBm ist Max beim nRF52840)
+                // Wir mappen -40dBm bis 8dBm auf 0-100% (logarithmisch ist schwierig für Laien, wir machen es linear zum Verständnis)
+                const pcnt = Math.round(((txVal + 40) / 48) * 100);
+                document.getElementById('tx-pcnt').innerText = pcnt;
+
+                const statusEl = document.getElementById('tx-status');
+                if (txVal >= 4) { statusEl.innerText = 'HIGH POWER'; statusEl.style.color = 'var(--primary)'; }
+                else if (txVal >= -4) { statusEl.innerText = 'BALANCED'; statusEl.style.color = 'var(--mid)'; }
+                else { statusEl.innerText = 'POWER SAVE'; statusEl.style.color = 'var(--accent)'; }
             });
 
             // Battery
-            await setupNotify(BATTERY_CHAR, (v) => {
+            await secureSetupNotify(BATTERY_CHAR, (v) => {
                 if (v.byteLength < 4) return;
                 const volt = v.getUint16(0, true) / 1000.0;
                 const soc = v.getUint8(2);
                 const status = v.getUint8(3); // 0=Batt, 1=Charging, 2=USB Full
                 
-                document.getElementById('batt-volt').innerText = volt.toFixed(2);
-                document.getElementById('batt-soc').innerText = soc + "%";
+                const voltEl = document.getElementById('batt-volt');
+                const socEl = document.getElementById('batt-soc');
+                
+                // Sanfter Übergang für den Text
+                voltEl.style.transition = 'color 0.5s ease';
+                voltEl.innerText = volt.toFixed(2);
+                socEl.innerText = soc + "%";
+                
                 const badge = document.getElementById('batt-usb');
                 if (status === 1) { badge.style.display='inline-block'; badge.innerText='CHARGING'; badge.style.background='var(--accent)'; }
                 else if (status === 2) { badge.style.display='inline-block'; badge.innerText='USB POWER'; badge.style.background='var(--green)'; }
                 else { badge.style.display='none'; }
 
-                const vEl = document.getElementById('batt-volt');
-                if (soc > 50) vEl.style.color = 'var(--green)';
-                else if (soc > 20) vEl.style.color = 'var(--high)';
-                else vEl.style.color = 'var(--accent)';
+                if (soc > 50) voltEl.style.color = 'var(--green)';
+                else if (soc > 20) voltEl.style.color = 'var(--high)';
+                else voltEl.style.color = 'var(--accent)';
             });
 
             // Sensors (Notify only, skip direct read to avoid NotSupported errors)
-            await setupNotify(ACCEL_CHAR, (v) => {
+            await secureSetupNotify(ACCEL_CHAR, (v) => {
                 if (v.byteLength < 12) return;
                 const x = v.getInt32(0, true)/1000.0, y = v.getInt32(4, true)/1000.0, z = v.getInt32(8, true)/1000.0;
                 document.getElementById('ax').innerText = x.toFixed(2);
@@ -376,12 +566,9 @@
                 document.getElementById('az').innerText = z.toFixed(2);
                 [x,y,z].forEach((val, i) => { charts.accel.data.datasets[i].data.push(val); charts.accel.data.datasets[i].data.shift(); });
                 charts.accel.update('none');
-                charts.rssi.data.datasets[0].data.push(currentTxPower);
-                charts.rssi.data.datasets[0].data.shift();
-                charts.rssi.update('none');
             }, true);
 
-            await setupNotify(GYRO_CHAR, (v) => {
+            await secureSetupNotify(GYRO_CHAR, (v) => {
                 if (v.byteLength < 12) return;
                 const x = (v.getInt32(0, true)/1000.0)*57.3, y = (v.getInt32(4, true)/1000.0)*57.3, z = (v.getInt32(8, true)/1000.0)*57.3;
                 document.getElementById('gx').innerText = x.toFixed(1);
@@ -391,7 +578,7 @@
                 charts.gyro.update('none');
             }, true);
 
-            await setupNotify(AUDIO_CHAR, (v) => {
+            await secureSetupNotify(AUDIO_CHAR, (v) => {
                 if (v.byteLength < 4) return;
                 const rms = v.getUint32(0, true) / 1000.0;
                 let dbfs = 20 * Math.log10(rms || 0.0001);
@@ -401,11 +588,11 @@
                 const fftData = new Float32Array(512);
                 for (let i = 0; i < 512; i++) {
                     const freq = (i * 16000 / 1024);
-                    const window = 0.5 * (1 - Math.cos(2 * Math.PI * i / 511));
-                    let binValue = (40 - (Math.log10(i + 1) * 8)) * window + Math.random() * 3;
+                    const win = 0.5 * (1 - Math.cos(2 * Math.PI * i / 511));
+                    let binValue = (40 - (Math.log10(i + 1) * 8)) * win + Math.random() * 3;
                     if (dbspl > 40) {
                         const intensity = (dbspl - 35);
-                        binValue += Math.exp(-Math.pow(i - 20, 2) / 30) * intensity * 1.3; 
+                        binValue += Math.exp(-Math.pow(i - 20, 2) / 30) * intensity * 1.3;
                         binValue += Math.exp(-Math.pow(i - 150, 2) / 300) * intensity * 0.9;
                         binValue += Math.exp(-Math.pow(i - 400, 2) / 800) * intensity * 0.6;
                     }
@@ -413,10 +600,21 @@
                     psd_ema[i] = (ema_alpha * binValue) + ((1 - ema_alpha) * psd_ema[i]);
                     fftData[i] = Math.max(30, Math.min(120, psd_ema[i]));
                 }
-                charts.psd.data.datasets[0].data = Array.from(fftData);
-                charts.psd.update('none');
-                updateWaterfall(fftData);
+                // SENIOR-DEV: Daten in Puffer schreiben, Rendering erfolgt via rAF Loop
+                lastPsdData = fftData;
             }, true);
+
+            // SENIOR-DEV: Reset Functionality
+            document.getElementById('reset-btn').onclick = async () => {
+                if (confirm("System will enter UF2 Bootloader Mode. Current session will end. Proceed?")) {
+                    try {
+                        const char = await service.getCharacteristic(RESET_CHAR);
+                        await char.writeValue(new Uint8Array([1]));
+                    } catch (e) { console.error("Reset failed", e); }
+                }
+            };
+
+            startRenderLoop();
 
         } catch (err) { console.error("BLE Error:", err); }
     });
