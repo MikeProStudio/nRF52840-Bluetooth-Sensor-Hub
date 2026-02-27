@@ -694,6 +694,17 @@
 
             startRenderLoop();
 
+            // --- Senior Dev: Auto-Hide PIN after successful connection ---
+            const pinDisplay = document.getElementById('pin-display');
+            if (pinDisplay) {
+                console.log("Senior-UI: Pairing complete, hiding PIN display...");
+                pinDisplay.style.transition = 'all 0.5s ease-out';
+                pinDisplay.style.opacity = '0';
+                setTimeout(() => {
+                    pinDisplay.style.display = 'none';
+                }, 500);
+            }
+
         } catch (err) { console.error("BLE Error:", err); }
     });
 </script>
