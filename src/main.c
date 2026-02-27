@@ -7,12 +7,15 @@
 #include <zephyr/bluetooth/hci.h>
 #include <zephyr/bluetooth/hci_vs.h>
 #include <zephyr/usb/usb_device.h>
+#include <zephyr/settings/settings.h>
 #include <zephyr/drivers/uart.h>
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/drivers/sensor.h>
 #include <zephyr/drivers/adc.h>
 #include <zephyr/audio/dmic.h>
 #include <zephyr/sys/byteorder.h>
+#include <nfc_t2t_lib.h>
+#include <nfc/ndef/uri_msg.h>
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
@@ -174,7 +177,7 @@ BT_GATT_SERVICE_DEFINE(custom_svc,
 
 /* --- Calibration & Timing --- */
 static float calibration_factor = 2.961f; /* Standard 1M/510k divider */
-#define BURST_SAMPLES 10                  /* Messungen innerhalb 1 Sekunde */
+#define BURST_SAMPLES 2                   /* Reduziert von 10, um Blocking zu minimieren */
 
 static void read_battery_voltage_impl(void)
 {
@@ -209,7 +212,7 @@ static void read_battery_voltage_impl(void)
 			raw_sum += m_mv;
 			samples_taken++;
 		}
-		k_msleep(100); /* 100ms * 10 = 1000ms (1 Sekunde Gesamtdauer) */
+		k_msleep(10); /* Reduziert von 100ms */
 	}
 	
 	/* 3. Hardware sofort wieder aus */
@@ -286,11 +289,11 @@ static char device_name_with_pin[32] = "Skynet Beacon";
 
 static struct bt_data ad[] = {
 	BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
-	BT_DATA_BYTES(BT_DATA_UUID128_ALL, BT_UUID_CUSTOM_SERVICE_VAL),
+	BT_DATA(BT_DATA_NAME_COMPLETE, device_name_with_pin, 13) /* Name ins Hauptpaket für Smartphones */
 };
 
 static struct bt_data sd[] = {
-	BT_DATA(BT_DATA_NAME_COMPLETE, device_name_with_pin, 13)
+	BT_DATA_BYTES(BT_DATA_UUID128_ALL, BT_UUID_CUSTOM_SERVICE_VAL), /* UUID ins Scan-Response */
 };
 
 static void connected(struct bt_conn *conn, uint8_t err)
@@ -306,36 +309,15 @@ static void connected(struct bt_conn *conn, uint8_t err)
 	}
 }
 
-static struct k_work adv_start_work;
-
-static void adv_start_handler(struct k_work *work)
-{
-	/* SENIOR-DEV: Name in Scan Response setzen */
-	sd[0].data_len = strlen(device_name_with_pin);
-
-	struct bt_le_adv_param adv_param = {
-		.id = BT_ID_DEFAULT,
-		.sid = 0,
-		.options = (1UL << 0), /* Nur CONNECTABLE */
-		.interval_min = BT_GAP_ADV_FAST_INT_MIN_2,
-		.interval_max = BT_GAP_ADV_FAST_INT_MAX_2,
-	};
-	int err = bt_le_adv_start(&adv_param, ad, ARRAY_SIZE(ad), sd, ARRAY_SIZE(sd));
-	if (err) {
-		printk("Advertising failed to restart (err %d)\n", err);
-	} else {
-		printk("Advertising restarted successfully\n");
-	}
-}
-
 static void disconnected(struct bt_conn *conn, uint8_t reason)
 {
 	printk("Disconnected (reason 0x%02x)\n", reason);
 	
-	/* SENIOR-DEV: Zuerst Advertising explizit stoppen, falls noch Reste laufen,
-	   dann über Workqueue neu starten. Das löst den Zombie-Modus. */
+	/* SENIOR-DEV: Zuerst Advertising explizit stoppen, falls noch Reste laufen. */
 	bt_le_adv_stop();
-	k_work_submit(&adv_start_work);
+	
+	/* Advertising wieder starten */
+	bt_ready(0);
 }
 
 BT_CONN_CB_DEFINE(conn_callbacks) = {
@@ -374,29 +356,13 @@ static void bt_ready(int err)
 	}
 	printk("Bluetooth initialized. Starting advertising...\n");
 
-	/* RGB Startup Sequence: R->G->B fade pulse, 10 cycles */
-	for (int i = 0; i < 10; i++) {
-		const struct gpio_dt_spec *specs[] = {&led_red_spec, &led_green_spec, &led_blue_spec};
-		for (int s = 0; s < 3; s++) {
-			if (!gpio_is_ready_dt(specs[s])) continue;
-			
-			/* Pseudo-fade using quick pulses (approx 75ms total per color) */
-			for (int j = 0; j < 8; j++) { /* Fade Up */
-				gpio_pin_set_dt(specs[s], 1);
-				k_usleep(j * 550);
-				gpio_pin_set_dt(specs[s], 0);
-				k_usleep((8 - j) * 550);
-			}
+	/* RGB Startup Sequence: Kurzer Flash statt langer Loop */
+	const struct gpio_dt_spec *specs[] = {&led_red_spec, &led_green_spec, &led_blue_spec};
+	for (int s = 0; s < 3; s++) {
+		if (gpio_is_ready_dt(specs[s])) {
 			gpio_pin_set_dt(specs[s], 1);
-			k_msleep(15); /* Peak */
-			for (int j = 8; j > 0; j--) { /* Fade Down */
-				gpio_pin_set_dt(specs[s], 1);
-				k_usleep(j * 550);
-				gpio_pin_set_dt(specs[s], 0);
-				k_usleep((8 - j) * 550);
-			}
+			k_msleep(50);
 			gpio_pin_set_dt(specs[s], 0);
-			k_msleep(50); /* Gap */
 		}
 	}
 
@@ -407,7 +373,7 @@ static void bt_ready(int err)
 	generated_passkey = short_pin * 100;
 	
 	snprintf(device_name_with_pin, sizeof(device_name_with_pin), "Skynet [%u]", short_pin);
-	sd[0].data_len = strlen(device_name_with_pin);
+	ad[1].data_len = strlen(device_name_with_pin);
 
 	printk("************************************************\n");
 	printk("SECURITY: Name=%s, Passkey=%06u\n", device_name_with_pin, generated_passkey);
@@ -419,7 +385,7 @@ static void bt_ready(int err)
 	struct bt_le_adv_param adv_param = {
 		.id = BT_ID_DEFAULT,
 		.sid = 0,
-		.options = (1UL << 0),
+		.options = (1UL << 0) | (1UL << 2),
 		.interval_min = BT_GAP_ADV_FAST_INT_MIN_2,
 		.interval_max = BT_GAP_ADV_FAST_INT_MAX_2,
 	};
@@ -442,7 +408,7 @@ K_MEM_SLAB_DEFINE(audio_mem_slab, AUDIO_BLOCK_SIZE, 8, 4);
 static struct k_thread audio_thread_data;
 static struct k_thread sensor_thread_data;
 K_THREAD_STACK_DEFINE(audio_stack, 2048);
-K_THREAD_STACK_DEFINE(sensor_stack, 1024);
+K_THREAD_STACK_DEFINE(sensor_stack, 2048);
 
 static void audio_thread(void *p1, void *p2, void *p3)
 {
@@ -480,6 +446,12 @@ static void audio_thread(void *p1, void *p2, void *p3)
 
 	while (1) {
 		ret = dmic_read(mic_dev, 0, &buffer, &size, SYS_FOREVER_MS);
+		if (ret != 0) {
+			printk("DMIC Read Error: %d\n", ret);
+			k_msleep(10);
+			continue;
+		}
+		
 		if (ret == 0) {
 			int16_t *samples = (int16_t *)buffer;
 			uint32_t count = size / sizeof(int16_t);
@@ -519,10 +491,11 @@ static void audio_thread(void *p1, void *p2, void *p3)
 
 			/* Debug print microphone level */
 			if (k_uptime_get_32() % 1000 < 50) {
-				printk("Mic RMS: %u (raw scale)\n", val_u32);
+				printk("Mic RMS: %u (raw scale), Notify status: %d\n", val_u32, 
+					bt_gatt_notify(NULL, &custom_svc.attrs[8], audio_level_buf, sizeof(audio_level_buf)));
+			} else {
+				bt_gatt_notify(NULL, &custom_svc.attrs[8], audio_level_buf, sizeof(audio_level_buf));
 			}
-
-			bt_gatt_notify(NULL, &custom_svc.attrs[8], audio_level_buf, sizeof(audio_level_buf));
 			k_mem_slab_free(&audio_mem_slab, buffer);
 		}
 		k_yield();
@@ -562,11 +535,65 @@ static void sensor_thread(void *p1, void *p2, void *p3)
 			bt_gatt_notify(NULL, &custom_svc.attrs[2], &accel_data, sizeof(accel_data));
 			bt_gatt_notify(NULL, &custom_svc.attrs[5], &gyro_data, sizeof(gyro_data));
 		}
-		k_msleep(20);
+		k_msleep(20); /* Wiederhergestellt auf 50Hz wie vom User gewünscht */
 	}
 }
 
+/* --- NFC Logic --- */
+static uint8_t nfc_ndef_msg_buf[128];
+
+static void nfc_callback(void *context, nfc_t2t_event_t event, const uint8_t *data, size_t data_len)
+{
+	switch (event) {
+	case NFC_T2T_EVENT_FIELD_ON:
+		printk("NFC: Field detected (Smartphone nearby)\n");
+		break;
+	case NFC_T2T_EVENT_FIELD_OFF:
+		printk("NFC: Field lost\n");
+		break;
+	default:
+		break;
+	}
+}
+
+static int setup_nfc(void)
+{
+	int err;
+	size_t len = sizeof(nfc_ndef_msg_buf);
+
+	err = nfc_t2t_setup(nfc_callback, NULL);
+	if (err) {
+		printk("NFC setup failed (err %d)\n", err);
+		return err;
+	}
+
+	/* URI: https://mikeprostudio.github.io/nRF52840-Bluetooth-Sensor-Hub/ */
+	/* Protocol: HTTPS (https://) */
+	const char *url = "mikeprostudio.github.io/nRF52840-Bluetooth-Sensor-Hub/";
+	err = nfc_ndef_uri_msg_encode(NFC_URI_HTTPS, url, strlen(url), nfc_ndef_msg_buf, &len);
+	if (err) {
+		printk("NFC NDEF encode failed (err %d)\n", err);
+		return err;
+	}
+
+	err = nfc_t2t_payload_set(nfc_ndef_msg_buf, len);
+	if (err) {
+		printk("NFC payload set failed (err %d)\n", err);
+		return err;
+	}
+
+	err = nfc_t2t_emulation_start();
+	if (err) {
+		printk("NFC emulation start failed (err %d)\n", err);
+		return err;
+	}
+
+	printk("NFC T2T emulation started. URL: https://www.%s\n", url);
+	return 0;
+}
+
 int main(void) {
+	setup_nfc();
 	if (gpio_is_ready_dt(&led)) { gpio_pin_configure_dt(&led, GPIO_OUTPUT_ACTIVE); }
 	if (gpio_is_ready_dt(&led_red_spec)) { gpio_pin_configure_dt(&led_red_spec, GPIO_OUTPUT_INACTIVE); }
 	if (gpio_is_ready_dt(&led_green_spec)) { gpio_pin_configure_dt(&led_green_spec, GPIO_OUTPUT_INACTIVE); }
@@ -586,8 +613,8 @@ int main(void) {
 	bt_conn_auth_cb_register(&auth_cb_display);
 
 	k_work_submit(&bt_ready_work);
-	k_thread_create(&audio_thread_data, audio_stack, K_THREAD_STACK_SIZEOF(audio_stack), audio_thread, NULL, NULL, NULL, 2, 0, K_NO_WAIT);
-	k_thread_create(&sensor_thread_data, sensor_stack, K_THREAD_STACK_SIZEOF(sensor_stack), sensor_thread, NULL, NULL, NULL, 3, 0, K_NO_WAIT);
+	k_thread_create(&audio_thread_data, audio_stack, K_THREAD_STACK_SIZEOF(audio_stack), audio_thread, NULL, NULL, NULL, 2, K_FP_REGS, K_NO_WAIT);
+	k_thread_create(&sensor_thread_data, sensor_stack, K_THREAD_STACK_SIZEOF(sensor_stack), sensor_thread, NULL, NULL, NULL, 3, K_FP_REGS, K_NO_WAIT);
 
 	uint32_t battery_timer = 0;
 	/* VARIABLE HIER ÄNDERN: Sendeintervall in Sekunden */

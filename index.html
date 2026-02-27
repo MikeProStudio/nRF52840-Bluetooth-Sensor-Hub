@@ -26,6 +26,8 @@
             --high: #ffcc00;
         }
 
+        * { box-sizing: border-box; }
+
         body { 
             font-family: 'Inter', sans-serif; 
             background: var(--bg); 
@@ -125,6 +127,66 @@
         .btn-danger:hover { background: #ff3e3e; color: white; opacity: 1; }
         
         .badge { font-size: 0.8rem; background: var(--low); padding: 4px 10px; border-radius: 4px; color: white; margin-top: 10px; font-family: 'JetBrains Mono'; text-transform: uppercase; letter-spacing: 1px; display: none; }
+
+        /* --- Responsive Corrections for Mobile/Tablet --- */
+        @media (max-width: 1200px) {
+            .header {
+                flex-direction: column;
+                padding: 30px 20px;
+                gap: 25px;
+                text-align: center;
+            }
+            .header-main {
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+            }
+            .bt-hub {
+                width: 100%;
+                justify-content: center;
+                flex-wrap: wrap;
+                gap: 20px;
+            }
+            .hub-item {
+                padding: 0 15px;
+            }
+        }
+
+        @media (max-width: 768px) {
+            .header-main h1 { font-size: 1.3rem; }
+            .bt-hub {
+                gap: 15px;
+            }
+            .hub-item {
+                border-right: none;
+                padding: 5px;
+                min-width: 120px;
+            }
+            .digital-readout { font-size: 1.6rem; }
+            .stats-grid { 
+                grid-template-columns: 1fr; 
+                gap: 15px;
+            }
+            .card {
+                padding: 15px;
+                width: 100%;
+                min-height: auto;
+            }
+            .chart-container {
+                height: 300px;
+            }
+            button { width: 100%; padding: 16px 20px; }
+        }
+
+        @media (max-width: 480px) {
+            .bt-hub { flex-direction: column; align-items: center; gap: 10px; }
+            .hub-item { 
+                border-bottom: 1px solid var(--border); 
+                width: 80%; 
+                padding-bottom: 10px;
+            }
+            .hub-item:last-child { border-bottom: none; }
+        }
     </style>
 </head>
 <body>
@@ -600,8 +662,8 @@
                     psd_ema[i] = (ema_alpha * binValue) + ((1 - ema_alpha) * psd_ema[i]);
                     fftData[i] = Math.max(30, Math.min(120, psd_ema[i]));
                 }
-                // SENIOR-DEV: Daten in Puffer schreiben, Rendering erfolgt via rAF Loop
-                lastPsdData = fftData;
+                // SENIOR-DEV: Daten in Puffer schreiben (Deep Copy für rAF Thread-Sicherheit)
+                lastPsdData = new Float32Array(fftData);
             }, true);
 
             // SENIOR-DEV: Reset Functionality

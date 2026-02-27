@@ -1,10 +1,14 @@
-This sample extends the same-named Zephyr sample to verify it with Nordic nRF54lv10 development kit.
+# nRF52 BLE Sensorbase (XIAO Sense)
 
-Source code and basic configuration files can be found in the corresponding folder structure in zephyr/samples/bluetooth/beacon.
+This project is a Bluetooth Beacon application based on the Zephyr controller, 
+specifically optimized for the **Seeed Studio XIAO nRF52840 Sense**.
 
-Building
-********
+## Hardware
+* **Board:** Seeed Studio XIAO nRF52840 Sense
+* **SoC:** Nordic Semiconductor nRF52840
 
-To build the sample for the nRF54LV10 DK, use the following command:
+## Building
+To build the project for the XIAO Sense board, use the following command:
 
-   west build -p -b nrf54lv10dk/nrf54lv10a/cpuapp -d build_54lv10 -T nrf.extended.sample.bluetooth.beacon .
+```powershell
+west build -p -b xiao_ble/nrf52840/sense

@@ -103,3 +103,7 @@
         zephyr,oversampling = <4>; 
 	};
 };
+
+&nfct {
+	status = "okay";
+};

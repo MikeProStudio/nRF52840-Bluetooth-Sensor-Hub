@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.20.0)
 
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
-project(beacon_1)
+project(nRF52_BLE_Sensorbase)
 
 # Include directories for nRF Connect SDK components
 # The previous attempt might have failed because we need to link against the specific library or the path structure is slightly different.
