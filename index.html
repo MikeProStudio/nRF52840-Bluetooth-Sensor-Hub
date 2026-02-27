@@ -196,6 +196,9 @@
         <div class="header-main">
             <h1>SKYNET <span style="font-weight:200">TACTICAL INTELLIGENCE</span></h1>
             <div class="status-badge"><div class="dot"></div> <span id="status-text">SYSTEM OFFLINE</span></div>
+            <div id="pin-display" style="display:none; font-family: 'JetBrains Mono'; font-size: 0.85rem; color: var(--primary); margin-top: 12px; border: 1px dashed var(--primary); padding: 8px 15px; border-radius: 8px; background: rgba(0, 242, 255, 0.05);">
+                DEVICE PAIRING CODE: <span id="pin-code" style="font-weight: 800; font-size: 1.1rem; margin-left: 5px; letter-spacing: 3px;">------</span>
+            </div>
         </div>
         
         <div class="bt-hub">
@@ -314,6 +317,19 @@
     const TX_POWER_CHAR = '12345678-1234-5678-1234-56789abcdef4';
     const BATTERY_CHAR = '12345678-1234-5678-1234-56789abcdef5';
     const RESET_CHAR = '12345678-1234-5678-1234-56789abcdef6';
+
+    // --- Senior Dev: NFC Comfort Trick PIN Parsing ---
+    const urlParams = new URLSearchParams(window.location.search);
+    const urlPin = urlParams.get('pin');
+    if (urlPin) {
+        const pinDisplay = document.getElementById('pin-display');
+        const pinCode = document.getElementById('pin-code');
+        if (pinDisplay && pinCode) {
+            pinCode.innerText = urlPin;
+            pinDisplay.style.display = 'block';
+            console.log("NFC Comfort Trick: PIN detected in URL:", urlPin);
+        }
+    }
 
     const HISTORY = 150;
     const labels = Array.from({length: HISTORY}, (_, i) => i);
@@ -557,7 +573,7 @@
             // SENIOR-DEV: Authentifizierungs-Retry Logic
             const secureSetupNotify = async (uuid, callback, skipRead = false) => {
                 let success = false;
-                let retries = 3;
+                let retries = 15; // Erhöht auf 15 (ca. 45 Sekunden), um genug Zeit für die PIN-Eingabe zu lassen!
                 while (!success && retries > 0) {
                     success = await setupNotify(uuid, callback, skipRead);
                     if (!success) {

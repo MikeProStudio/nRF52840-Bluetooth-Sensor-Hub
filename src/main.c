@@ -382,17 +382,11 @@ static void connected(struct bt_conn *conn, uint8_t err)
 	if (err) {
 		printk("Connection failed (err 0x%02x)\n", err);
 	} else {
-		printk("Connected. Forcing security upgrade (L4)...\n");
+		printk("Connected. Waiting for GATT access to trigger security...\n");
 		if (current_conn) {
 			bt_conn_unref(current_conn);
 		}
 		current_conn = bt_conn_ref(conn);
-
-		/* Force security upgrade to trigger pairing dialog on the OS */
-		int sec_err = bt_conn_set_security(conn, BT_SECURITY_L4);
-		if (sec_err) {
-			printk("Failed to request security (err %d)\n", sec_err);
-		}
 	}
 }
 
@@ -653,8 +647,10 @@ static int setup_nfc(void)
 		return err;
 	}
 
-	/* 2. Create URI Record (Single record for maximum compatibility) */
-	const char *url = "mikeprostudio.github.io/nRF52840-Bluetooth-Sensor-Hub/";
+	/* Create URI Record with dynamic PIN */
+	char url[128];
+	snprintf(url, sizeof(url), "mikeprostudio.github.io/nRF52840-Bluetooth-Sensor-Hub/?pin=%06u", generated_passkey);
+
 	err = nfc_ndef_uri_msg_encode(NFC_URI_HTTPS, url, strlen(url), nfc_ndef_msg_buf, &len);
 	if (err) {
 		printk("NFC NDEF encode failed (err %d)\n", err);
@@ -688,8 +684,12 @@ int main(void) {
 	bt_conn_auth_cb_register(&auth_cb_display);
 	bt_conn_auth_info_cb_register(&auth_info_cb);
 
-	/* Set fixed passkey for convenience (as requested) */
-	bt_passkey_set(1234);
+	/* Generate a unique, constant 6-digit PIN from Hardware FICR DeviceAddress */
+	generated_passkey = (NRF_FICR->DEVICEADDR[0] % 900000) + 100000;
+	bt_passkey_set(generated_passkey);
+	printk("----------------------------------\n");
+	printk("DEVICE UNIQUE PIN: %06u\n", generated_passkey);
+	printk("----------------------------------\n");
 
 	int err = bt_enable(NULL);
 	if (err) {
