@@ -64,6 +64,17 @@ static const struct adc_dt_spec adc_channel = ADC_DT_SPEC_GET_BY_IDX(DT_PATH(zep
 #define BT_UUID_BATTERY_CHRC    BT_UUID_DECLARE_128(BT_UUID_BATTERY_CHRC_VAL)
 #define BT_UUID_RESET_CHRC      BT_UUID_DECLARE_128(BT_UUID_RESET_CHRC_VAL)
 
+/* Sichere Indizes für GATT-Charakteristiken (verhindert Magic Numbers) */
+enum {
+	IDX_CUSTOM_SVC = 0,
+	IDX_ACCEL_VAL = 2,
+	IDX_GYRO_VAL = 5,
+	IDX_AUDIO_VAL = 8,
+	IDX_TX_POWER_VAL = 11,
+	IDX_BATTERY_VAL = 14,
+	IDX_RESET_VAL = 17,
+};
+
 /* Data structures for BLE transmission */
 struct imu_data_t {
 	uint8_t data[12]; /* 3x int32_t (x,y,z) serialized as LE */
@@ -83,6 +94,53 @@ static struct batt_data_t battery_status = {0};
 static void read_battery_voltage_impl(void);
 static void update_tx_power_based_on_battery_impl(void);
 static void bt_ready(int err);
+
+/* --- Power Management (Asynchron) --- */
+static struct k_work_delayable batt_work;
+static struct k_work_delayable status_work;
+static uint8_t last_power_status = 255;
+
+static void status_work_handler(struct k_work *work)
+{
+	uint8_t current_status = 0;
+	if (gpio_pin_configure(gpio0_dev, CHG_STAT_PIN, GPIO_INPUT | GPIO_PULL_UP) == 0) {
+		bool is_charging = (gpio_pin_get(gpio0_dev, CHG_STAT_PIN) == 0);
+		bool vbus_present = (NRF_POWER->USBREGSTATUS & 1);
+
+		if (is_charging) {
+			current_status = 1; /* Charging */
+			gpio_pin_configure(gpio0_dev, HICHG_PIN, GPIO_OUTPUT_HIGH); 
+		} else if (vbus_present) {
+			current_status = 2; /* USB Power / Full */
+			gpio_pin_configure(gpio0_dev, HICHG_PIN, GPIO_OUTPUT_LOW);
+		} else {
+			current_status = 0; /* Battery Mode */
+			gpio_pin_configure(gpio0_dev, HICHG_PIN, GPIO_OUTPUT_LOW);
+		}
+	}
+	
+	/* Notify immediately if status changes */
+	if (current_status != last_power_status) {
+		battery_status.status = current_status;
+		last_power_status = current_status;
+		update_tx_power_based_on_battery_impl();
+	}
+	/* Poll state every 1 second */
+	k_work_reschedule(&status_work, K_SECONDS(1));
+}
+
+static void batt_work_handler(struct k_work *work)
+{
+	read_battery_voltage_impl();
+	update_tx_power_based_on_battery_impl();
+	
+	/* Smart Polling: 1s interval for the first 30 seconds, then 10s interval as requested */
+	if (k_uptime_get_32() < 30000) {
+		k_work_reschedule(&batt_work, K_SECONDS(1));
+	} else {
+		k_work_reschedule(&batt_work, K_SECONDS(10));
+	}
+}
 
 /* --- BLE Security Callbacks --- */
 static void auth_passkey_display(struct bt_conn *conn, unsigned int passkey)
@@ -234,7 +292,7 @@ static void read_battery_voltage_impl(void)
 	/* 1. Hardware vorbereiten */
 	err = gpio_pin_configure(gpio0_dev, READ_BAT_PIN, GPIO_OUTPUT);
 	gpio_pin_set(gpio0_dev, READ_BAT_PIN, 0);
-	k_msleep(10); /* Kurze Wartezeit zum Einschwingen */
+	k_msleep(50); /* Erhöht auf 50ms zum sauberen Einschwingen des Teilers */
 
 	err = adc_channel_setup_dt(&adc_channel);
 	if (err != 0) {
@@ -242,7 +300,7 @@ static void read_battery_voltage_impl(void)
 		return;
 	}
 
-	/* 2. Burst-Messung: 10 Samples über ca. 1 Sekunde verteilt */
+	/* 2. Burst-Messung */
 	for (int i = 0; i < BURST_SAMPLES; i++) {
 		(void)adc_sequence_init_dt(&adc_channel, &sequence);
 		err = adc_read(adc_channel.dev, &sequence);
@@ -252,7 +310,7 @@ static void read_battery_voltage_impl(void)
 			raw_sum += m_mv;
 			samples_taken++;
 		}
-		k_msleep(10); /* Reduziert von 100ms */
+		k_msleep(10);
 	}
 	
 	/* 3. Hardware sofort wieder aus */
@@ -283,25 +341,6 @@ static void read_battery_voltage_impl(void)
 		else if (val_mv <= 3300) battery_status.soc = 0;
 		else battery_status.soc = (uint8_t)((val_mv - 3300) * 100 / (4150 - 3300));
 	}
-
-	/* 7. Determine Supply Status via /CHG (P0.17) and VBUS */
-	err = gpio_pin_configure(gpio0_dev, CHG_STAT_PIN, GPIO_INPUT | GPIO_PULL_UP);
-	if (err == 0) {
-		bool is_charging = (gpio_pin_get(gpio0_dev, CHG_STAT_PIN) == 0);
-		bool vbus_present = (NRF_POWER->USBREGSTATUS & 1);
-
-		if (is_charging) {
-			battery_status.status = 1; /* Charging */
-			gpio_pin_configure(gpio0_dev, HICHG_PIN, GPIO_OUTPUT_HIGH); 
-		} else if (vbus_present) {
-			battery_status.status = 2; /* USB Power / Full */
-			gpio_pin_configure(gpio0_dev, HICHG_PIN, GPIO_OUTPUT_LOW);
-		} else {
-			battery_status.status = 0; /* Battery Mode */
-			gpio_pin_configure(gpio0_dev, HICHG_PIN, GPIO_OUTPUT_LOW);
-		}
-	}
-	
 }
 
 static void update_tx_power_based_on_battery_impl(void)
@@ -320,8 +359,8 @@ static void update_tx_power_based_on_battery_impl(void)
 		set_bt_tx_power(target_power);
 	}
 
-	/* Notify Battery Data (Index 14) */
-	bt_gatt_notify(NULL, &custom_svc.attrs[14], &battery_status, sizeof(battery_status));
+	/* Notify Battery Data */
+	bt_gatt_notify(NULL, &custom_svc.attrs[IDX_BATTERY_VAL], &battery_status, sizeof(battery_status));
 }
 
 static uint32_t generated_passkey = 0;
@@ -528,13 +567,13 @@ static void audio_thread(void *p1, void *p2, void *p3)
 			/* Debug print microphone level */
 			if (k_uptime_get_32() % 1000 < 50) {
 				int status = -1;
-				if (current_conn && bt_gatt_is_subscribed(current_conn, &custom_svc.attrs[8], BT_GATT_CCC_NOTIFY)) {
-					status = bt_gatt_notify(current_conn, &custom_svc.attrs[8], audio_level_buf, sizeof(audio_level_buf));
+				if (current_conn && bt_gatt_is_subscribed(current_conn, &custom_svc.attrs[IDX_AUDIO_VAL], BT_GATT_CCC_NOTIFY)) {
+					status = bt_gatt_notify(current_conn, &custom_svc.attrs[IDX_AUDIO_VAL], audio_level_buf, sizeof(audio_level_buf));
 				}
 				printk("Mic RMS: %u (raw scale), Notify status: %d\n", val_u32, status);
 			} else {
-				if (current_conn && bt_gatt_is_subscribed(current_conn, &custom_svc.attrs[8], BT_GATT_CCC_NOTIFY)) {
-					bt_gatt_notify(current_conn, &custom_svc.attrs[8], audio_level_buf, sizeof(audio_level_buf));
+				if (current_conn && bt_gatt_is_subscribed(current_conn, &custom_svc.attrs[IDX_AUDIO_VAL], BT_GATT_CCC_NOTIFY)) {
+					bt_gatt_notify(current_conn, &custom_svc.attrs[IDX_AUDIO_VAL], audio_level_buf, sizeof(audio_level_buf));
 				}
 			}
 			k_mem_slab_free(&audio_mem_slab, buffer);
@@ -574,11 +613,11 @@ static void sensor_thread(void *p1, void *p2, void *p3)
 			sys_put_le32(gz, &gyro_data.data[8]);
 			
 			if (current_conn) {
-				if (bt_gatt_is_subscribed(current_conn, &custom_svc.attrs[2], BT_GATT_CCC_NOTIFY)) {
-					bt_gatt_notify(current_conn, &custom_svc.attrs[2], &accel_data, sizeof(accel_data));
+				if (bt_gatt_is_subscribed(current_conn, &custom_svc.attrs[IDX_ACCEL_VAL], BT_GATT_CCC_NOTIFY)) {
+					bt_gatt_notify(current_conn, &custom_svc.attrs[IDX_ACCEL_VAL], &accel_data, sizeof(accel_data));
 				}
-				if (bt_gatt_is_subscribed(current_conn, &custom_svc.attrs[5], BT_GATT_CCC_NOTIFY)) {
-					bt_gatt_notify(current_conn, &custom_svc.attrs[5], &gyro_data, sizeof(gyro_data));
+				if (bt_gatt_is_subscribed(current_conn, &custom_svc.attrs[IDX_GYRO_VAL], BT_GATT_CCC_NOTIFY)) {
+					bt_gatt_notify(current_conn, &custom_svc.attrs[IDX_GYRO_VAL], &gyro_data, sizeof(gyro_data));
 				}
 			}
 		}
@@ -671,22 +710,17 @@ int main(void) {
 	k_thread_create(&audio_thread_data, audio_stack, K_THREAD_STACK_SIZEOF(audio_stack), audio_thread, NULL, NULL, NULL, 2, K_FP_REGS, K_NO_WAIT);
 	k_thread_create(&sensor_thread_data, sensor_stack, K_THREAD_STACK_SIZEOF(sensor_stack), sensor_thread, NULL, NULL, NULL, 3, K_FP_REGS, K_NO_WAIT);
 
-	uint32_t battery_timer = 0;
-	/* VARIABLE HIER ÄNDERN: Sendeintervall in Sekunden */
-	int battery_send_interval_sec = 30;
+	/* Initialize and start periodic battery monitoring */
+	k_work_init_delayable(&batt_work, batt_work_handler);
+	k_work_reschedule(&batt_work, K_NO_WAIT);
+
+	/* Initialize and start periodic status monitoring */
+	k_work_init_delayable(&status_work, status_work_handler);
+	k_work_reschedule(&status_work, K_NO_WAIT);
 
 	while (1) {
-		/* Burst-Messung (Dauert ca. 1 Sekunde durch k_msleep in der Funktion) */
-		read_battery_voltage_impl();
-
-		/* Senden und Logik-Update basierend auf Intervall */
-		if (battery_timer == 0 || battery_timer >= battery_send_interval_sec) {
-			update_tx_power_based_on_battery_impl();
-			battery_timer = 0;
-		}
-
-		battery_timer++;
-		/* Pause zwischen den Mess-Zyklen */
+		/* The main loop is now very light, everything is handled by threads and workqueues.
+		   We sleep for a longer time to save power. */
 		k_msleep(1000);
 	}
 	return 0;

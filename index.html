@@ -612,7 +612,7 @@
                 const badge = document.getElementById('batt-usb');
                 if (status === 1) { badge.style.display='inline-block'; badge.innerText='CHARGING'; badge.style.background='var(--accent)'; }
                 else if (status === 2) { badge.style.display='inline-block'; badge.innerText='USB POWER'; badge.style.background='var(--green)'; }
-                else { badge.style.display='none'; }
+                else { badge.style.display='inline-block'; badge.innerText='BATTERY'; badge.style.background='var(--low)'; }
 
                 if (soc > 50) voltEl.style.color = 'var(--green)';
                 else if (soc > 20) voltEl.style.color = 'var(--high)';
