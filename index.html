@@ -196,8 +196,18 @@
         <div class="header-main">
             <h1>SKYNET <span style="font-weight:200">TACTICAL INTELLIGENCE</span></h1>
             <div class="status-badge"><div class="dot"></div> <span id="status-text">SYSTEM OFFLINE</span></div>
-            <div id="pin-display" style="display:none; font-family: 'JetBrains Mono'; font-size: 0.85rem; color: var(--primary); margin-top: 12px; border: 1px dashed var(--primary); padding: 8px 15px; border-radius: 8px; background: rgba(0, 242, 255, 0.05);">
-                DEVICE PAIRING CODE: <span id="pin-code" style="font-weight: 800; font-size: 1.1rem; margin-left: 5px; letter-spacing: 3px;">------</span>
+            <div id="pin-display" style="display:none; align-items: center; gap: 15px; font-family: 'JetBrains Mono'; font-size: 0.85rem; color: var(--primary); margin-top: 15px; border: 1px solid rgba(0, 242, 255, 0.3); padding: 10px 15px; border-radius: 12px; background: rgba(0, 242, 255, 0.03); overflow: hidden; position: relative;">
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <span style="opacity: 0.6;">CODE:</span>
+                    <span id="pin-code" style="font-weight: 800; font-size: 1.1rem; letter-spacing: 3px; color: #fff;">------</span>
+                </div>
+                <button id="copy-pin" style="padding: 4px 10px; font-size: 0.65rem; border-width: 1px; min-width: auto; border-radius: 6px;">Copy</button>
+                <div style="margin-left: auto; display: flex; align-items: center; gap: 8px; font-size: 0.75rem;">
+                    <span style="opacity: 0.6;">EXPIRES:</span>
+                    <span id="pin-timer" style="color: var(--accent); font-weight: 800; min-width: 25px;">20s</span>
+                </div>
+                <!-- Transition Overlay -->
+                <div id="pin-shutter" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: var(--primary); transform: translateX(-101%); pointer-events: none; z-index: 2;"></div>
             </div>
         </div>
         
@@ -318,16 +328,71 @@
     const BATTERY_CHAR = '12345678-1234-5678-1234-56789abcdef5';
     const RESET_CHAR = '12345678-1234-5678-1234-56789abcdef6';
 
-    // --- Senior Dev: NFC Comfort Trick PIN Parsing ---
+    // --- Senior Dev: NFC Comfort Trick PIN Parsing & Timer ---
     const urlParams = new URLSearchParams(window.location.search);
     const urlPin = urlParams.get('pin');
+    let pinActive = false;
+
+    function removePinDisplay() {
+        if (!pinActive) return;
+        pinActive = false;
+        const display = document.getElementById('pin-display');
+        const shutter = document.getElementById('pin-shutter');
+        if (display && shutter) {
+            console.log("Senior-UI: Destroying security token display...");
+            // Sophisticated "Scanline/Shutter" effect
+            shutter.style.transition = 'transform 0.4s cubic-bezier(0.7, 0, 0.3, 1)';
+            shutter.style.transform = 'translateX(0)';
+            
+            setTimeout(() => {
+                display.style.transition = 'all 0.3s ease-in';
+                display.style.height = '0';
+                display.style.marginTop = '0';
+                display.style.paddingTop = '0';
+                display.style.paddingBottom = '0';
+                display.style.opacity = '0';
+                display.style.borderWidth = '0';
+                setTimeout(() => {
+                    display.style.display = 'none';
+                }, 300);
+            }, 400);
+        }
+    }
+
     if (urlPin) {
+        pinActive = true;
         const pinDisplay = document.getElementById('pin-display');
         const pinCode = document.getElementById('pin-code');
+        const pinTimer = document.getElementById('pin-timer');
+        const copyBtn = document.getElementById('copy-pin');
+
         if (pinDisplay && pinCode) {
             pinCode.innerText = urlPin;
-            pinDisplay.style.display = 'block';
-            console.log("NFC Comfort Trick: PIN detected in URL:", urlPin);
+            pinDisplay.style.display = 'flex';
+            
+            // Countdown Logic
+            let timeLeft = 20;
+            const timerInterval = setInterval(() => {
+                timeLeft--;
+                if (pinTimer) pinTimer.innerText = timeLeft + 's';
+                if (timeLeft <= 0) {
+                    clearInterval(timerInterval);
+                    removePinDisplay();
+                }
+            }, 1000);
+
+            // Copy Button Logic
+            if (copyBtn) {
+                copyBtn.onclick = () => {
+                    navigator.clipboard.writeText(urlPin);
+                    copyBtn.innerText = 'COPIED!';
+                    copyBtn.style.borderColor = 'var(--mid)';
+                    setTimeout(() => {
+                        copyBtn.innerText = 'Copy';
+                        copyBtn.style.borderColor = '';
+                    }, 2000);
+                };
+            }
         }
     }
 
@@ -695,15 +760,7 @@
             startRenderLoop();
 
             // --- Senior Dev: Auto-Hide PIN after successful connection ---
-            const pinDisplay = document.getElementById('pin-display');
-            if (pinDisplay) {
-                console.log("Senior-UI: Pairing complete, hiding PIN display...");
-                pinDisplay.style.transition = 'all 0.5s ease-out';
-                pinDisplay.style.opacity = '0';
-                setTimeout(() => {
-                    pinDisplay.style.display = 'none';
-                }, 500);
-            }
+            removePinDisplay();
 
         } catch (err) { console.error("BLE Error:", err); }
     });
