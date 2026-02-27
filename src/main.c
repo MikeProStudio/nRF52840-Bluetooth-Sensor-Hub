@@ -16,9 +16,11 @@
 #include <zephyr/sys/byteorder.h>
 #include <nfc_t2t_lib.h>
 #include <nfc/ndef/uri_msg.h>
+#include <nfc/ndef/le_oob_rec.h>
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+
 
 /* --- Hardware Definitions --- */
 #define LED0_NODE DT_ALIAS(led0)
@@ -81,6 +83,44 @@ static struct batt_data_t battery_status = {0};
 static void read_battery_voltage_impl(void);
 static void update_tx_power_based_on_battery_impl(void);
 static void bt_ready(int err);
+
+/* --- BLE Security Callbacks --- */
+static void auth_passkey_display(struct bt_conn *conn, unsigned int passkey)
+{
+	char addr[BT_ADDR_LE_STR_LEN];
+	bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
+	printk("*********************************\n");
+	printk("STATIC PASSKEY REQUIRED: %06u\n", passkey);
+	printk("*********************************\n");
+}
+
+static void auth_cancel(struct bt_conn *conn)
+{
+	char addr[BT_ADDR_LE_STR_LEN];
+	bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
+	printk("Pairing cancelled: %s\n", addr);
+}
+
+static void pairing_complete(struct bt_conn *conn, bool bonded)
+{
+	printk("Pairing complete. Bonded: %s\n", bonded ? "yes" : "no");
+}
+
+static void pairing_failed(struct bt_conn *conn, enum bt_security_err reason)
+{
+	printk("Pairing failed (reason %d)\n", reason);
+}
+
+static struct bt_conn_auth_cb auth_cb_display = {
+	.passkey_display = auth_passkey_display,
+	.passkey_entry = NULL,
+	.cancel = auth_cancel,
+};
+
+static struct bt_conn_auth_info_cb auth_info_cb = {
+	.pairing_complete = pairing_complete,
+	.pairing_failed = pairing_failed,
+};
 
 /* Set TX Power via Nordic HCI VS Command */
 static int set_bt_tx_power(int8_t power_dbm) {
@@ -161,18 +201,18 @@ static ssize_t write_reset(struct bt_conn *conn, const struct bt_gatt_attr *attr
 /* Service declaration */
 BT_GATT_SERVICE_DEFINE(custom_svc,
 	BT_GATT_PRIMARY_SERVICE(BT_UUID_CUSTOM_SERVICE),
-	/* BT_GATT_PERM_READ_ENCRYPT erfordert Kopplung für Datenzugriff */
-	BT_GATT_CHARACTERISTIC(BT_UUID_ACCEL_CHRC, BT_GATT_CHRC_NOTIFY, BT_GATT_PERM_READ_ENCRYPT, NULL, NULL, NULL),
-	BT_GATT_CCC(ccc_cfg_changed, BT_GATT_PERM_READ_ENCRYPT | BT_GATT_PERM_WRITE_ENCRYPT),
-	BT_GATT_CHARACTERISTIC(BT_UUID_GYRO_CHRC, BT_GATT_CHRC_NOTIFY, BT_GATT_PERM_READ_ENCRYPT, NULL, NULL, NULL),
-	BT_GATT_CCC(ccc_cfg_changed, BT_GATT_PERM_READ_ENCRYPT | BT_GATT_PERM_WRITE_ENCRYPT),
-	BT_GATT_CHARACTERISTIC(BT_UUID_AUDIO_CHRC, BT_GATT_CHRC_NOTIFY, BT_GATT_PERM_READ_ENCRYPT, NULL, NULL, NULL),
-	BT_GATT_CCC(ccc_cfg_changed, BT_GATT_PERM_READ_ENCRYPT | BT_GATT_PERM_WRITE_ENCRYPT),
-	BT_GATT_CHARACTERISTIC(BT_UUID_TX_POWER_CHRC, BT_GATT_CHRC_READ | BT_GATT_CHRC_NOTIFY, BT_GATT_PERM_READ_ENCRYPT, read_tx_power, NULL, NULL),
-	BT_GATT_CCC(ccc_cfg_changed, BT_GATT_PERM_READ_ENCRYPT | BT_GATT_PERM_WRITE_ENCRYPT),
-	BT_GATT_CHARACTERISTIC(BT_UUID_BATTERY_CHRC, BT_GATT_CHRC_READ | BT_GATT_CHRC_NOTIFY, BT_GATT_PERM_READ_ENCRYPT, read_battery, NULL, NULL),
-	BT_GATT_CCC(ccc_cfg_changed, BT_GATT_PERM_READ_ENCRYPT | BT_GATT_PERM_WRITE_ENCRYPT),
-	BT_GATT_CHARACTERISTIC(BT_UUID_RESET_CHRC, BT_GATT_CHRC_WRITE, BT_GATT_PERM_WRITE_ENCRYPT, NULL, write_reset, NULL),
+	/* Sicherheits-Architektur: Authentifizierung (Pairing) für ALLE Sensordaten erforderlich. */
+	BT_GATT_CHARACTERISTIC(BT_UUID_ACCEL_CHRC, BT_GATT_CHRC_NOTIFY, BT_GATT_PERM_READ_AUTHEN, NULL, NULL, NULL),
+	BT_GATT_CCC(ccc_cfg_changed, BT_GATT_PERM_READ_AUTHEN | BT_GATT_PERM_WRITE_AUTHEN),
+	BT_GATT_CHARACTERISTIC(BT_UUID_GYRO_CHRC, BT_GATT_CHRC_NOTIFY, BT_GATT_PERM_READ_AUTHEN, NULL, NULL, NULL),
+	BT_GATT_CCC(ccc_cfg_changed, BT_GATT_PERM_READ_AUTHEN | BT_GATT_PERM_WRITE_AUTHEN),
+	BT_GATT_CHARACTERISTIC(BT_UUID_AUDIO_CHRC, BT_GATT_CHRC_NOTIFY, BT_GATT_PERM_READ_AUTHEN, NULL, NULL, NULL),
+	BT_GATT_CCC(ccc_cfg_changed, BT_GATT_PERM_READ_AUTHEN | BT_GATT_PERM_WRITE_AUTHEN),
+	BT_GATT_CHARACTERISTIC(BT_UUID_TX_POWER_CHRC, BT_GATT_CHRC_READ | BT_GATT_CHRC_NOTIFY, BT_GATT_PERM_READ_AUTHEN, read_tx_power, NULL, NULL),
+	BT_GATT_CCC(ccc_cfg_changed, BT_GATT_PERM_READ_AUTHEN | BT_GATT_PERM_WRITE_AUTHEN),
+	BT_GATT_CHARACTERISTIC(BT_UUID_BATTERY_CHRC, BT_GATT_CHRC_READ | BT_GATT_CHRC_NOTIFY, BT_GATT_PERM_READ_AUTHEN, read_battery, NULL, NULL),
+	BT_GATT_CCC(ccc_cfg_changed, BT_GATT_PERM_READ_AUTHEN | BT_GATT_PERM_WRITE_AUTHEN),
+	BT_GATT_CHARACTERISTIC(BT_UUID_RESET_CHRC, BT_GATT_CHRC_WRITE, BT_GATT_PERM_WRITE_AUTHEN, NULL, write_reset, NULL),
 );
 
 /* --- Calibration & Timing --- */
@@ -285,39 +325,58 @@ static void update_tx_power_based_on_battery_impl(void)
 }
 
 static uint32_t generated_passkey = 0;
-static char device_name_with_pin[32] = "Skynet Beacon";
+static char device_name_with_pin[32] = "Skynet AI Beacon";
 
 static struct bt_data ad[] = {
 	BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
-	BT_DATA(BT_DATA_NAME_COMPLETE, device_name_with_pin, 13) /* Name ins Hauptpaket für Smartphones */
+	BT_DATA(BT_DATA_NAME_COMPLETE, device_name_with_pin, 16) /* Name ins Hauptpaket für Smartphones */
 };
 
 static struct bt_data sd[] = {
 	BT_DATA_BYTES(BT_DATA_UUID128_ALL, BT_UUID_CUSTOM_SERVICE_VAL), /* UUID ins Scan-Response */
 };
 
+static struct bt_conn *current_conn = NULL;
+
 static void connected(struct bt_conn *conn, uint8_t err)
 {
 	if (err) {
 		printk("Connection failed (err 0x%02x)\n", err);
 	} else {
-		printk("Connected, requesting security level 4...\n");
-		
-		/* SENIOR-DEV: Falls bereits gekoppelt, Name zurücksetzen.
-		   Hier prüfen wir, ob die Verbindung verschlüsselt ist. */
-		bt_conn_set_security(conn, BT_SECURITY_L4);
+		printk("Connected. Forcing security upgrade (L4)...\n");
+		if (current_conn) {
+			bt_conn_unref(current_conn);
+		}
+		current_conn = bt_conn_ref(conn);
+
+		/* Force security upgrade to trigger pairing dialog on the OS */
+		int sec_err = bt_conn_set_security(conn, BT_SECURITY_L4);
+		if (sec_err) {
+			printk("Failed to request security (err %d)\n", sec_err);
+		}
 	}
+}
+
+static struct k_work adv_start_work;
+
+static void adv_start_handler(struct k_work *work)
+{
+	bt_ready(0);
 }
 
 static void disconnected(struct bt_conn *conn, uint8_t reason)
 {
 	printk("Disconnected (reason 0x%02x)\n", reason);
 	
-	/* SENIOR-DEV: Zuerst Advertising explizit stoppen, falls noch Reste laufen. */
+	if (current_conn == conn) {
+		bt_conn_unref(current_conn);
+		current_conn = NULL;
+	}
+
+	/* SENIOR-DEV: Zuerst Advertising explizit stoppen, falls noch Reste laufen,
+	   dann über Workqueue neu starten. Das löst den Zombie-Modus. */
 	bt_le_adv_stop();
-	
-	/* Advertising wieder starten */
-	bt_ready(0);
+	k_work_submit(&adv_start_work);
 }
 
 BT_CONN_CB_DEFINE(conn_callbacks) = {
@@ -330,23 +389,6 @@ static void bt_ready_work_handler(struct k_work *work)
 	bt_ready(0);
 }
 static K_WORK_DEFINE(bt_ready_work, bt_ready_work_handler);
-
-/* Security Callbacks für Passkey-Authentifizierung */
-static void auth_passkey_display(struct bt_conn *conn, unsigned int passkey)
-{
-	printk("Security: Passkey for pairing is %06u\n", passkey);
-}
-
-static void auth_cancel(struct bt_conn *conn)
-{
-	printk("Security: Pairing cancelled\n");
-}
-
-static struct bt_conn_auth_cb auth_cb_display = {
-	.passkey_display = auth_passkey_display,
-	.passkey_entry = NULL,
-	.cancel = auth_cancel,
-};
 
 static void bt_ready(int err)
 {
@@ -367,19 +409,13 @@ static void bt_ready(int err)
 	}
 
 	set_bt_tx_power(8);
-	/* SENIOR-DEV: Hardware-PIN aus DeviceID generieren */
-	uint32_t dev_id = NRF_FICR->DEVICEID[0];
-	uint32_t short_pin = (dev_id % 9000) + 1000;
-	generated_passkey = short_pin * 100;
-	
-	snprintf(device_name_with_pin, sizeof(device_name_with_pin), "Skynet [%u]", short_pin);
+
+	snprintf(device_name_with_pin, sizeof(device_name_with_pin), "Skynet AI Beacon");
 	ad[1].data_len = strlen(device_name_with_pin);
 
 	printk("************************************************\n");
-	printk("SECURITY: Name=%s, Passkey=%06u\n", device_name_with_pin, generated_passkey);
+	printk("SECURITY: Passkey Display (L4) enabled\n");
 	printk("************************************************\n");
-
-	bt_passkey_set(generated_passkey);
 
 	/* SENIOR-DEV: Nutze Standard-Parameter für maximale Kompatibilität */
 	struct bt_le_adv_param adv_param = {
@@ -491,10 +527,15 @@ static void audio_thread(void *p1, void *p2, void *p3)
 
 			/* Debug print microphone level */
 			if (k_uptime_get_32() % 1000 < 50) {
-				printk("Mic RMS: %u (raw scale), Notify status: %d\n", val_u32, 
-					bt_gatt_notify(NULL, &custom_svc.attrs[8], audio_level_buf, sizeof(audio_level_buf)));
+				int status = -1;
+				if (current_conn && bt_gatt_is_subscribed(current_conn, &custom_svc.attrs[8], BT_GATT_CCC_NOTIFY)) {
+					status = bt_gatt_notify(current_conn, &custom_svc.attrs[8], audio_level_buf, sizeof(audio_level_buf));
+				}
+				printk("Mic RMS: %u (raw scale), Notify status: %d\n", val_u32, status);
 			} else {
-				bt_gatt_notify(NULL, &custom_svc.attrs[8], audio_level_buf, sizeof(audio_level_buf));
+				if (current_conn && bt_gatt_is_subscribed(current_conn, &custom_svc.attrs[8], BT_GATT_CCC_NOTIFY)) {
+					bt_gatt_notify(current_conn, &custom_svc.attrs[8], audio_level_buf, sizeof(audio_level_buf));
+				}
 			}
 			k_mem_slab_free(&audio_mem_slab, buffer);
 		}
@@ -532,15 +573,21 @@ static void sensor_thread(void *p1, void *p2, void *p3)
 			sys_put_le32(gy, &gyro_data.data[4]);
 			sys_put_le32(gz, &gyro_data.data[8]);
 			
-			bt_gatt_notify(NULL, &custom_svc.attrs[2], &accel_data, sizeof(accel_data));
-			bt_gatt_notify(NULL, &custom_svc.attrs[5], &gyro_data, sizeof(gyro_data));
+			if (current_conn) {
+				if (bt_gatt_is_subscribed(current_conn, &custom_svc.attrs[2], BT_GATT_CCC_NOTIFY)) {
+					bt_gatt_notify(current_conn, &custom_svc.attrs[2], &accel_data, sizeof(accel_data));
+				}
+				if (bt_gatt_is_subscribed(current_conn, &custom_svc.attrs[5], BT_GATT_CCC_NOTIFY)) {
+					bt_gatt_notify(current_conn, &custom_svc.attrs[5], &gyro_data, sizeof(gyro_data));
+				}
+			}
 		}
 		k_msleep(20); /* Wiederhergestellt auf 50Hz wie vom User gewünscht */
 	}
 }
 
 /* --- NFC Logic --- */
-static uint8_t nfc_ndef_msg_buf[128];
+static uint8_t nfc_ndef_msg_buf[256]; /* Vergrößert auf 256 Bytes */
 
 static void nfc_callback(void *context, nfc_t2t_event_t event, const uint8_t *data, size_t data_len)
 {
@@ -567,8 +614,7 @@ static int setup_nfc(void)
 		return err;
 	}
 
-	/* URI: https://mikeprostudio.github.io/nRF52840-Bluetooth-Sensor-Hub/ */
-	/* Protocol: HTTPS (https://) */
+	/* 2. Create URI Record (Single record for maximum compatibility) */
 	const char *url = "mikeprostudio.github.io/nRF52840-Bluetooth-Sensor-Hub/";
 	err = nfc_ndef_uri_msg_encode(NFC_URI_HTTPS, url, strlen(url), nfc_ndef_msg_buf, &len);
 	if (err) {
@@ -588,29 +634,38 @@ static int setup_nfc(void)
 		return err;
 	}
 
-	printk("NFC T2T emulation started. URL: https://www.%s\n", url);
+	printk("NFC URI Tag ready. URL: https://%s\n", url);
 	return 0;
 }
 
 int main(void) {
-	setup_nfc();
 	if (gpio_is_ready_dt(&led)) { gpio_pin_configure_dt(&led, GPIO_OUTPUT_ACTIVE); }
 	if (gpio_is_ready_dt(&led_red_spec)) { gpio_pin_configure_dt(&led_red_spec, GPIO_OUTPUT_INACTIVE); }
 	if (gpio_is_ready_dt(&led_green_spec)) { gpio_pin_configure_dt(&led_green_spec, GPIO_OUTPUT_INACTIVE); }
 	if (gpio_is_ready_dt(&led_blue_spec)) { gpio_pin_configure_dt(&led_blue_spec, GPIO_OUTPUT_INACTIVE); }
 	
 	usb_enable(NULL);
+
+	bt_conn_auth_cb_register(&auth_cb_display);
+	bt_conn_auth_info_cb_register(&auth_info_cb);
+
+	/* Set fixed passkey for convenience (as requested) */
+	bt_passkey_set(1234);
+
 	int err = bt_enable(NULL);
 	if (err) {
 		printk("Bluetooth init failed (err %d)\n", err);
 		return 0;
 	}
 
-	/* SENIOR-DEV: Settings laden für persistentes Bonding */
-	settings_load();
+	if (IS_ENABLED(CONFIG_BT_SETTINGS)) {
+		settings_load();
+	}
 
-	/* SENIOR-DEV: Auth Callbacks registrieren (Passkey wird dynamisch in bt_ready gesetzt) */
-	bt_conn_auth_cb_register(&auth_cb_display);
+	/* Initialize NFC after BT is ready so we can fetch the device address */
+	setup_nfc();
+
+	k_work_init(&adv_start_work, adv_start_handler);
 
 	k_work_submit(&bt_ready_work);
 	k_thread_create(&audio_thread_data, audio_stack, K_THREAD_STACK_SIZEOF(audio_stack), audio_thread, NULL, NULL, NULL, 2, K_FP_REGS, K_NO_WAIT);
