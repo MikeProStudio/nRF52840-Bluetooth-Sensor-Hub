@@ -13,3 +13,5 @@ docs/images/
 #local rules
 .windsurfrules
 .windsurfignore
+
+/plans
