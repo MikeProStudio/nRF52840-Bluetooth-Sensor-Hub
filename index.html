@@ -722,28 +722,57 @@
             }, true);
 
             await secureSetupNotify(AUDIO_CHAR, (v) => {
-                if (v.byteLength < 4) return;
+                if (v.byteLength < 8) return;
                 const rms = v.getUint32(0, true) / 1000.0;
+                const zcr = v.getUint32(4, true);
+
                 let dbfs = 20 * Math.log10(rms || 0.0001);
                 let dbspl = dbfs + 94 + 41;
                 if (dbspl < 30) dbspl = 30;
 
+                // Estimate fundamental frequency based on ZCR
+                // ZCR max theoretical in a 1024 sample block at 16kHz is 1024 (8000Hz)
+                // freq_est = (ZCR / samples) * (sample_rate / 2)
+                const freq_est = (zcr / 1024) * 8000;
+
                 const fftData = new Float32Array(512);
                 for (let i = 0; i < 512; i++) {
-                    const freq = (i * 16000 / 1024);
-                    const win = 0.5 * (1 - Math.cos(2 * Math.PI * i / 511));
-                    let binValue = (40 - (Math.log10(i + 1) * 8)) * win + Math.random() * 3;
+                    const binFreq = (i * 16000 / 1024);
+                    
+                    // Base noise floor
+                    let binValue = 30 + Math.random() * 5; 
+                    
+                    // If we have sound, create a peak around the estimated frequency
                     if (dbspl > 40) {
-                        const intensity = (dbspl - 35);
-                        binValue += Math.exp(-Math.pow(i - 20, 2) / 30) * intensity * 1.3;
-                        binValue += Math.exp(-Math.pow(i - 150, 2) / 300) * intensity * 0.9;
-                        binValue += Math.exp(-Math.pow(i - 400, 2) / 800) * intensity * 0.6;
+                        const intensity = (dbspl - 30);
+                        
+                        // Distance from current bin to estimated frequency
+                        const dist = Math.abs(binFreq - freq_est);
+                        
+                        // Create a bell curve (Gaussian) around the dominant frequency
+                        // The width of the bell curve depends on the intensity
+                        const width = 200 + (intensity * 10);
+                        binValue += Math.exp(-Math.pow(dist, 2) / (2 * Math.pow(width, 2))) * intensity;
+                        
+                        // Add some harmonics for realism
+                        const distH2 = Math.abs(binFreq - (freq_est * 2));
+                        binValue += Math.exp(-Math.pow(distH2, 2) / (2 * Math.pow(width/2, 2))) * (intensity * 0.4);
+                        
+                        // Low frequency rumble base
+                        binValue += Math.exp(-Math.pow(i - 10, 2) / 100) * (intensity * 0.3);
                     }
-                    binValue += getAWeighting(freq || 1);
+                    
+                    // Apply A-Weighting curve
+                    binValue += getAWeighting(binFreq || 1);
+                    
+                    // EMA Smoothing
                     psd_ema[i] = (ema_alpha * binValue) + ((1 - ema_alpha) * psd_ema[i]);
                     fftData[i] = Math.max(30, Math.min(120, psd_ema[i]));
                 }
-                // SENIOR-DEV: Daten in Puffer schreiben (Deep Copy für rAF Thread-Sicherheit)
+                
+                // Debug log occasionally
+                if (Math.random() < 0.05) console.log(`Audio -> ZCR: ${zcr}, Est. Freq: ${Math.round(freq_est)}Hz, SPL: ${Math.round(dbspl)}dB`);
+
                 lastPsdData = new Float32Array(fftData);
             }, true);
 

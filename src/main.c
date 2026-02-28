@@ -4,7 +4,6 @@
 #include <zephyr/bluetooth/uuid.h>
 #include <zephyr/bluetooth/gatt.h>
 #include <zephyr/bluetooth/hci.h>
-#include <zephyr/bluetooth/hci.h>
 #include <zephyr/bluetooth/hci_vs.h>
 #include <zephyr/usb/usb_device.h>
 #include <zephyr/settings/settings.h>
@@ -20,7 +19,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
-
 
 /* --- Hardware Definitions --- */
 #define LED0_NODE DT_ALIAS(led0)
@@ -86,7 +84,7 @@ struct batt_data_t {
 } __packed;
 
 static struct imu_data_t accel_data, gyro_data;
-static uint8_t audio_level_buf[4]; /* uint32_t serialized */
+static uint8_t audio_level_buf[8]; /* uint32_t RMS + uint32_t ZCR */
 static int8_t tx_power_level = 0; /* Default start value */
 static struct batt_data_t battery_status = {0};
 
@@ -524,14 +522,32 @@ static void audio_thread(void *p1, void *p2, void *p3)
 		if (ret == 0) {
 			int16_t *samples = (int16_t *)buffer;
 			uint32_t count = size / sizeof(int16_t);
+			
 			double sum_sq = 0;
+			uint32_t zero_crossings = 0;
+			int16_t last_sample = 0;
+
 			for (uint32_t i = 0; i < count; i++) {
+				/* RMS Calculation */
 				double val = (double)samples[i] / 32768.0;
 				sum_sq += val * val;
+
+				/* Zero-Crossing Rate (ZCR) Calculation */
+				/* Check if the sign changed compared to the last sample, ignore exactly 0 to avoid noise jitter */
+				if (i > 0) {
+					if ((samples[i] > 0 && last_sample < 0) || (samples[i] < 0 && last_sample > 0)) {
+						zero_crossings++;
+					}
+				}
+				last_sample = samples[i];
 			}
+			
 			double rms = sqrt(sum_sq / (double)count);
+			
+			/* Pack data for BLE: [4 bytes RMS] [4 bytes ZCR] */
 			val_u32 = (uint32_t)(rms * 1000.0);
-			sys_put_le32(val_u32, audio_level_buf);
+			sys_put_le32(val_u32, &audio_level_buf[0]);
+			sys_put_le32(zero_crossings, &audio_level_buf[4]);
 			
 			/* RGB LED Audio Logic (Highly Smoothed for Fade-out effect) */
 			static double smoothed_rms = 0.0;
