@@ -34,9 +34,6 @@ A professional-grade BLE (Bluetooth Low Energy) beacon and sensor monitoring app
 - `app.overlay`: Hardware abstraction layer and pin mapping.
 - `prj.conf`: Zephyr kernel and subsystem configuration.
 - `index.html`: Live monitoring dashboard (Vercel/GitHub Pages optimized).
-- `docs/images/`:
-  - `hardware/`: Photos of the physical setup.
-  - `webui/`: Screenshots of the configuration interface.
 
 ## 📸 Visual Documentation
 
