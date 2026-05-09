@@ -638,21 +638,52 @@
             // SENIOR-DEV: Authentifizierungs-Retry Logic
             const secureSetupNotify = async (uuid, callback, skipRead = false) => {
                 let success = false;
-                let retries = 15; // Erhöht auf 15 (ca. 45 Sekunden), um genug Zeit für die PIN-Eingabe zu lassen!
+                let retries = 15;
                 while (!success && retries > 0) {
-                    success = await setupNotify(uuid, callback, skipRead);
-                    if (!success) {
-                        console.log(`Senior-UI: Auth delay, retrying ${uuid} in 3s... (${retries} left)`);
-                        await new Promise(r => setTimeout(r, 3000));
+                    if (!bluetoothDevice || !bluetoothDevice.gatt.connected) {
+                        console.log("Senior-UI: GATT link dead during setup, attempting full recovery...");
+                        try {
+                            bluetoothServer = await bluetoothDevice.gatt.connect();
+                            await new Promise(r => setTimeout(r, 1000)); // Cool down
+                        } catch (e) {
+                            console.log("Senior-UI: Recovery failed, retrying...");
+                            await new Promise(r => setTimeout(r, 2000));
+                            retries--;
+                            continue;
+                        }
+                    }
+                    
+                    try {
+                        const activeService = await bluetoothServer.getPrimaryService(SERVICE_UUID);
+                        const c = await activeService.getCharacteristic(uuid);
+                        await c.startNotifications();
+                        c.addEventListener('characteristicvaluechanged', (e) => callback(e.target.value));
+                        if (!skipRead) {
+                            await new Promise(r => setTimeout(r, 300));
+                            const initial = await c.readValue();
+                            callback(initial);
+                        }
+                        success = true;
+                        console.log(`Senior-UI: Successfully configured ${uuid}`);
+                    } catch (e) {
+                        console.log(`Senior-UI: Characteristic setup failed (${uuid}), retrying...`, e);
+                        await new Promise(r => setTimeout(r, 2000));
                         retries--;
                     }
                 }
                 return success;
             };
 
-            // Wartezeit für den PIN Dialog (Betriebssystem braucht Zeit zum Aufpoppen)
-            console.log("Senior-UI: Waiting for security handshake...");
-            await new Promise(r => setTimeout(r, 4000));
+            // Wartezeit für den PIN Dialog / Bonding Handshake
+            console.log("Senior-UI: Waiting for encryption/bonding handshake...");
+            await new Promise(r => setTimeout(r, 3500)); 
+
+            // Final link check before starting characteristic discovery
+            if (!bluetoothDevice.gatt.connected) {
+                console.log("Senior-UI: Connection dropped by OS after bonding, reconnecting...");
+                bluetoothServer = await bluetoothDevice.gatt.connect();
+                await new Promise(r => setTimeout(r, 1000));
+            }
 
             // Sequentielles Setup mit Auth-Retries
             await secureSetupNotify(TX_POWER_CHAR, (v) => {

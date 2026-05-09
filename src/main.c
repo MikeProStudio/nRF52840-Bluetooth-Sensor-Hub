@@ -13,18 +13,22 @@
 #include <zephyr/drivers/adc.h>
 #include <zephyr/audio/dmic.h>
 #include <zephyr/sys/byteorder.h>
+#include <hal/nrf_power.h>
+#include <hal/nrf_ficr.h>
 #include <nfc_t2t_lib.h>
 #include <nfc/ndef/uri_msg.h>
 #include <nfc/ndef/le_oob_rec.h>
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <stdio.h>
+#include <zephyr/drivers/display.h>
+#include "font8x8.h"
 
 /* --- Hardware Definitions --- */
 #define LED0_NODE DT_ALIAS(led0)
 #define LED1_NODE DT_ALIAS(led1)
 #define LED2_NODE DT_ALIAS(led2)
-static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET(LED0_NODE, gpios);
 static const struct gpio_dt_spec led_red_spec = GPIO_DT_SPEC_GET(LED0_NODE, gpios);
 static const struct gpio_dt_spec led_green_spec = GPIO_DT_SPEC_GET(LED1_NODE, gpios);
 static const struct gpio_dt_spec led_blue_spec = GPIO_DT_SPEC_GET(LED2_NODE, gpios);
@@ -88,10 +92,38 @@ static uint8_t audio_level_buf[8]; /* uint32_t RMS + uint32_t ZCR */
 static int8_t tx_power_level = 0; /* Default start value */
 static struct batt_data_t battery_status = {0};
 
+/* OLED Display (SSD1306 128x64, P0.04=SDA, P0.05=SCL, VCC=P1.11) */
+#include <hal/nrf_gpio.h>
+#define OLED_NODE DT_NODELABEL(ssd1306)
+static const struct device *const oled_dev = DEVICE_DT_GET(OLED_NODE);
+#define OLED_W 128
+#define OLED_H 64
+#define OLED_FB_SIZE (OLED_W * OLED_H / 8)
+static uint8_t oled_fb[OLED_FB_SIZE];
+
+/* VCC fuer OLED P1.11 via HAL vor allen anderen Treibern einschalten */
+static int oled_vcc_init(void)
+{
+	nrf_gpio_cfg(43,
+		     NRF_GPIO_PIN_DIR_OUTPUT,
+		     NRF_GPIO_PIN_INPUT_DISCONNECT,
+		     NRF_GPIO_PIN_NOPULL,
+		     NRF_GPIO_PIN_H0H1,
+		     NRF_GPIO_PIN_NOSENSE);
+	nrf_gpio_pin_set(43);
+	return 0;
+}
+SYS_INIT(oled_vcc_init, POST_KERNEL, 70);
+
 /* Forward Declarations */
 static void read_battery_voltage_impl(void);
 static void update_tx_power_based_on_battery_impl(void);
-static void bt_ready(int err);
+static void start_advertising(void);
+
+/* OLED + BT state */
+static bool bt_connected_flag;
+static uint8_t oled_phase; /* 0 = welcome, 1 = PIN+Status, 2 = Sensor */
+static struct k_work_delayable oled_work;
 
 /* --- Power Management (Asynchron) --- */
 static struct k_work_delayable batt_work;
@@ -103,7 +135,7 @@ static void status_work_handler(struct k_work *work)
 	uint8_t current_status = 0;
 	if (gpio_pin_configure(gpio0_dev, CHG_STAT_PIN, GPIO_INPUT | GPIO_PULL_UP) == 0) {
 		bool is_charging = (gpio_pin_get(gpio0_dev, CHG_STAT_PIN) == 0);
-		bool vbus_present = (NRF_POWER->USBREGSTATUS & 1);
+		bool vbus_present = (nrf_power_usbregstatus_get(NRF_POWER) & NRF_POWER_USBREGSTATUS_VBUSDETECT_MASK);
 
 		if (is_charging) {
 			current_status = 1; /* Charging */
@@ -248,7 +280,7 @@ static ssize_t write_reset(struct bt_conn *conn, const struct bt_gatt_attr *attr
 	if (val == 1) {
 		printk("SYSTEM RESET TO BOOTLOADER REQUESTED...\n");
 		/* Nordic-specific: Jump to Bootloader via GPREGRET */
-		NRF_POWER->GPREGRET = 0x57; /* Standard Nordic Bootloader Magic (Enter Bootloader) */
+		nrf_power_gpregret_set(NRF_POWER, 0, 0x57); /* Standard Nordic Bootloader Magic (Enter Bootloader) */
 		NVIC_SystemReset();
 	}
 	return len;
@@ -373,40 +405,29 @@ static struct bt_data sd[] = {
 	BT_DATA_BYTES(BT_DATA_UUID128_ALL, BT_UUID_CUSTOM_SERVICE_VAL), /* UUID ins Scan-Response */
 };
 
-static struct bt_conn *current_conn = NULL;
+/* Forward reference for advertising work */
+static struct k_work adv_start_work;
+static void adv_start_handler(struct k_work *work);
 
 static void connected(struct bt_conn *conn, uint8_t err)
 {
 	if (err) {
 		printk("Connection failed (err 0x%02x)\n", err);
 	} else {
-		printk("Connected. Waiting for GATT access to trigger security...\n");
-		if (current_conn) {
-			bt_conn_unref(current_conn);
-		}
-		current_conn = bt_conn_ref(conn);
+		printk("Connected.\n");
+		bt_connected_flag = true;
+		oled_phase = 2;
+		k_work_reschedule(&oled_work, K_NO_WAIT);
+		k_work_submit(&adv_start_work);
 	}
-}
-
-static struct k_work adv_start_work;
-
-static void adv_start_handler(struct k_work *work)
-{
-	bt_ready(0);
 }
 
 static void disconnected(struct bt_conn *conn, uint8_t reason)
 {
 	printk("Disconnected (reason 0x%02x)\n", reason);
-	
-	if (current_conn == conn) {
-		bt_conn_unref(current_conn);
-		current_conn = NULL;
-	}
-
-	/* SENIOR-DEV: Zuerst Advertising explizit stoppen, falls noch Reste laufen,
-	   dann über Workqueue neu starten. Das löst den Zombie-Modus. */
-	bt_le_adv_stop();
+	bt_connected_flag = false;
+	oled_phase = 1;
+	k_work_reschedule(&oled_work, K_NO_WAIT);
 	k_work_submit(&adv_start_work);
 }
 
@@ -415,29 +436,67 @@ BT_CONN_CB_DEFINE(conn_callbacks) = {
 	.disconnected = disconnected,
 };
 
-static void bt_ready_work_handler(struct k_work *work)
+static void phy_update(struct bt_conn *conn, struct bt_conn_le_phy_info *param)
 {
-	bt_ready(0);
+	printk("PHY update: TX PHY %d, RX PHY %d\n", param->tx_phy, param->rx_phy);
 }
-static K_WORK_DEFINE(bt_ready_work, bt_ready_work_handler);
 
-static void bt_ready(int err)
+static struct bt_conn_cb conn_callbacks_phy = {
+	.le_phy_updated = phy_update,
+};
+
+static void start_advertising(void)
 {
-	if (err) {
-		printk("Bluetooth ready failed (err %d)\n", err);
-		return;
-	}
-	printk("Bluetooth initialized. Starting advertising...\n");
+	struct bt_le_adv_param adv_param = {
+		.id = BT_ID_DEFAULT,
+		.sid = 0,
+		.options = (1UL << 0) | (1UL << 2), /* BT_LE_ADV_OPT_CONNECTABLE | BT_LE_ADV_OPT_USE_NAME */
+		.interval_min = BT_GAP_ADV_FAST_INT_MIN_2,
+		.interval_max = BT_GAP_ADV_FAST_INT_MAX_2,
+	};
 
-	/* RGB Startup Sequence: Kurzer Flash statt langer Loop */
-	const struct gpio_dt_spec *specs[] = {&led_red_spec, &led_green_spec, &led_blue_spec};
-	for (int s = 0; s < 3; s++) {
-		if (gpio_is_ready_dt(specs[s])) {
-			gpio_pin_set_dt(specs[s], 1);
-			k_msleep(50);
-			gpio_pin_set_dt(specs[s], 0);
+	int err = bt_le_adv_start(&adv_param, ad, ARRAY_SIZE(ad), sd, ARRAY_SIZE(sd));
+	if (err) {
+		if (err != -EALREADY) {
+			printk("Advertising failed to start (err %d)\n", err);
 		}
+	} else {
+		printk("Advertising started. Skynet Beacon is visible.\n");
 	}
+}
+
+static void adv_start_handler(struct k_work *work)
+{
+	start_advertising();
+}
+
+static void bt_ready_init(void)
+{
+		/* RGB Startup Sequence: R->G->B fade pulse, 10 cycles */
+	for (int i = 0; i < 10; i++) {
+		const struct gpio_dt_spec *specs[] = {&led_red_spec, &led_green_spec, &led_blue_spec};
+		for (int s = 0; s < 3; s++) {
+			if (!gpio_is_ready_dt(specs[s])) continue;
+
+			/* Pseudo-fade using quick pulses (approx 75ms total per color) */
+			for (int j = 0; j < 8; j++) { /* Fade Up */
+				gpio_pin_set_dt(specs[s], 1);
+				k_usleep(j * 550);
+				gpio_pin_set_dt(specs[s], 0);
+				k_usleep((8 - j) * 550);
+			}
+			gpio_pin_set_dt(specs[s], 1);
+			k_msleep(15); /* Peak */
+			for (int j = 8; j > 0; j--) { /* Fade Down */
+				gpio_pin_set_dt(specs[s], 1);
+				k_usleep(j * 550);
+				gpio_pin_set_dt(specs[s], 0);
+				k_usleep((8 - j) * 550);
+			}
+			gpio_pin_set_dt(specs[s], 0);
+			k_msleep(50); /* Gap */
+		}
+	}	
 
 	set_bt_tx_power(8);
 
@@ -448,20 +507,7 @@ static void bt_ready(int err)
 	printk("SECURITY: Passkey Display (L4) enabled\n");
 	printk("************************************************\n");
 
-	/* SENIOR-DEV: Nutze Standard-Parameter für maximale Kompatibilität */
-	struct bt_le_adv_param adv_param = {
-		.id = BT_ID_DEFAULT,
-		.sid = 0,
-		.options = (1UL << 0) | (1UL << 2),
-		.interval_min = BT_GAP_ADV_FAST_INT_MIN_2,
-		.interval_max = BT_GAP_ADV_FAST_INT_MAX_2,
-	};
-	int adv_err = bt_le_adv_start(&adv_param, ad, ARRAY_SIZE(ad), sd, ARRAY_SIZE(sd));
-	if (adv_err) {
-		printk("Advertising failed to start (err %d)\n", adv_err);
-	} else {
-		printk("Advertising started. Skynet Beacon is visible.\n");
-	}
+	start_advertising();
 }
 
 static int32_t my_sensor_value_to_milli(const struct sensor_value *val) { return (val->val1 * 1000) + (val->val2 / 1000); }
@@ -574,17 +620,11 @@ static void audio_thread(void *p1, void *p2, void *p3)
 				}
 			}
 
-			/* Debug print microphone level */
 			if (k_uptime_get_32() % 1000 < 50) {
-				int status = -1;
-				if (current_conn && bt_gatt_is_subscribed(current_conn, &custom_svc.attrs[IDX_AUDIO_VAL], BT_GATT_CCC_NOTIFY)) {
-					status = bt_gatt_notify(current_conn, &custom_svc.attrs[IDX_AUDIO_VAL], audio_level_buf, sizeof(audio_level_buf));
-				}
-				printk("Mic RMS: %u (raw scale), Notify status: %d\n", val_u32, status);
+				bt_gatt_notify(NULL, &custom_svc.attrs[IDX_AUDIO_VAL], audio_level_buf, sizeof(audio_level_buf));
+				printk("Mic RMS: %u (raw scale), Notify all clients\n", val_u32);
 			} else {
-				if (current_conn && bt_gatt_is_subscribed(current_conn, &custom_svc.attrs[IDX_AUDIO_VAL], BT_GATT_CCC_NOTIFY)) {
-					bt_gatt_notify(current_conn, &custom_svc.attrs[IDX_AUDIO_VAL], audio_level_buf, sizeof(audio_level_buf));
-				}
+				bt_gatt_notify(NULL, &custom_svc.attrs[IDX_AUDIO_VAL], audio_level_buf, sizeof(audio_level_buf));
 			}
 			k_mem_slab_free(&audio_mem_slab, buffer);
 		}
@@ -622,14 +662,8 @@ static void sensor_thread(void *p1, void *p2, void *p3)
 			sys_put_le32(gy, &gyro_data.data[4]);
 			sys_put_le32(gz, &gyro_data.data[8]);
 			
-			if (current_conn) {
-				if (bt_gatt_is_subscribed(current_conn, &custom_svc.attrs[IDX_ACCEL_VAL], BT_GATT_CCC_NOTIFY)) {
-					bt_gatt_notify(current_conn, &custom_svc.attrs[IDX_ACCEL_VAL], &accel_data, sizeof(accel_data));
-				}
-				if (bt_gatt_is_subscribed(current_conn, &custom_svc.attrs[IDX_GYRO_VAL], BT_GATT_CCC_NOTIFY)) {
-					bt_gatt_notify(current_conn, &custom_svc.attrs[IDX_GYRO_VAL], &gyro_data, sizeof(gyro_data));
-				}
-			}
+			bt_gatt_notify(NULL, &custom_svc.attrs[IDX_ACCEL_VAL], &accel_data, sizeof(accel_data));
+			bt_gatt_notify(NULL, &custom_svc.attrs[IDX_GYRO_VAL], &gyro_data, sizeof(gyro_data));
 		}
 		k_msleep(20); /* Wiederhergestellt auf 50Hz wie vom User gewünscht */
 	}
@@ -689,8 +723,174 @@ static int setup_nfc(void)
 	return 0;
 }
 
+/* --- OLED Display Functions --- */
+static void oled_set_pixel(uint16_t x, uint16_t y, uint8_t on)
+{
+	if (x >= OLED_W || y >= OLED_H) return;
+	uint16_t page = y / 8;
+	uint8_t bit = y % 8;
+	uint16_t idx = page * OLED_W + x;
+	if (on) oled_fb[idx] |= (1 << bit);
+	else    oled_fb[idx] &= ~(1 << bit);
+}
+
+static void oled_putc_w(uint16_t x, uint16_t y, char c, uint8_t w)
+{
+	if (c < 0x20 || c > 0x7E) c = ' ';
+	if (w > 8) w = 8;
+	uint8_t idx = c - 0x20;
+	for (int row = 0; row < 8 && (y + row) < OLED_H; row++) {
+		uint8_t bits = font8x8[idx][row];
+		for (int col = 0; col < w && (x + col) < OLED_W; col++) {
+			if (bits & (1 << (7 - col)))
+				oled_set_pixel(x + col, y + row, 1);
+		}
+	}
+}
+
+static void oled_puts_w(uint16_t x, uint16_t y, const char *str, uint8_t w)
+{
+	while (*str) {
+		oled_putc_w(x, y, *str, w);
+		x += w;
+		if (x + w > OLED_W) { x = 0; y += 8; }
+		str++;
+	}
+}
+
+static void oled_putc(uint16_t x, uint16_t y, char c)
+{
+	oled_putc_w(x, y, c, 8);
+}
+
+static void oled_puts(uint16_t x, uint16_t y, const char *str)
+{
+	oled_puts_w(x, y, str, 8);
+}
+
+static void oled_clear(void)
+{
+	memset(oled_fb, 0, sizeof(oled_fb));
+}
+
+static void oled_flush(void)
+{
+	struct display_buffer_descriptor desc = {
+		.width = OLED_W,
+		.height = OLED_H,
+		.pitch = OLED_W,
+		.buf_size = OLED_FB_SIZE,
+	};
+	display_write(oled_dev, 0, 0, &desc, oled_fb);
+}
+
+static int oled_init(void)
+{
+	if (!device_is_ready(oled_dev)) {
+		printk("OLED device not ready\n");
+		return -ENODEV;
+	}
+	display_blanking_off(oled_dev);
+	oled_clear();
+	oled_flush();
+	if (IS_ENABLED(CONFIG_LOG)) printk("OLED initialized\n");
+	return 0;
+}
+
+static void oled_update_display(void)
+{
+	char buf[24];
+
+	oled_clear();
+
+	snprintf(buf, sizeof(buf), "Skynet AI Beacon");
+	oled_puts(0, 0, buf);
+
+	snprintf(buf, sizeof(buf), "PIN: %06u", generated_passkey);
+	oled_puts(0, 16, buf);
+
+	snprintf(buf, sizeof(buf), "BAT: %umV %u%%", battery_status.voltage_mv, battery_status.soc);
+	oled_puts(0, 32, buf);
+
+	const char *status_str;
+	switch (battery_status.status) {
+	case 1:  status_str = "Charging";   break;
+	case 2:  status_str = "USB Power";  break;
+	default: status_str = "Battery";    break;
+	}
+	snprintf(buf, sizeof(buf), "PWR: %s", status_str);
+	oled_puts(0, 48, buf);
+
+	oled_flush();
+}
+
+static void fmt_val(char *buf, int32_t val)
+{
+	int neg = (val < 0);
+	if (neg) val = -val;
+	int ip = val / 1000;
+	int fp = (val % 1000 + 5) / 10;
+	if (fp >= 100) { ip++; fp = 0; }
+	snprintf(buf, 10, "%s%d.%02u", neg ? "-" : " ", ip, (unsigned int)fp);
+}
+
+static void oled_update_connected(void)
+{
+	char buf[24], xs[10], ys[10], zs[10];
+
+	oled_clear();
+
+	oled_puts(0, 0, "Skynet AI Beacon");
+
+	int32_t ax = (int32_t)sys_get_le32(&accel_data.data[0]);
+	int32_t ay = (int32_t)sys_get_le32(&accel_data.data[4]);
+	int32_t az = (int32_t)sys_get_le32(&accel_data.data[8]);
+	int32_t gx = (int32_t)sys_get_le32(&gyro_data.data[0]);
+	int32_t gy = (int32_t)sys_get_le32(&gyro_data.data[4]);
+	int32_t gz = (int32_t)sys_get_le32(&gyro_data.data[8]);
+
+	fmt_val(xs, ax); fmt_val(ys, ay); fmt_val(zs, az);
+	oled_puts_w(0, 10, "   X:      Y:      Z:", 6);
+	snprintf(buf, sizeof(buf), "Acc %s %s %s", xs, ys, zs);
+	oled_puts_w(0, 20, buf, 6);
+
+	fmt_val(xs, gx); fmt_val(ys, gy); fmt_val(zs, gz);
+	snprintf(buf, sizeof(buf), "Gyr %s %s %s", xs, ys, zs);
+	oled_puts_w(0, 30, buf, 6);
+
+	snprintf(buf, sizeof(buf), "BAT %umV %u%%", battery_status.voltage_mv, battery_status.soc);
+	oled_puts_w(0, 42, buf, 6);
+
+	const char *pwr;
+	switch (battery_status.status) {
+	case 1:  pwr = "Charging";   break;
+	case 2:  pwr = "USB Power";  break;
+	default: pwr = "Battery";    break;
+	}
+	snprintf(buf, sizeof(buf), "PWR %s", pwr);
+	oled_puts_w(0, 52, buf, 6);
+
+	oled_flush();
+}
+
+static void oled_work_handler(struct k_work *work)
+{
+	if (oled_phase == 0) {
+		oled_clear();
+		oled_puts(16, 24, "Welcome!");
+		oled_flush();
+		oled_phase = 1;
+		k_work_reschedule(&oled_work, K_SECONDS(2));
+	} else if (bt_connected_flag) {
+		oled_update_connected();
+		k_work_reschedule(&oled_work, K_SECONDS(5));
+	} else {
+		oled_update_display();
+		k_work_reschedule(&oled_work, K_SECONDS(3));
+	}
+}
+
 int main(void) {
-	if (gpio_is_ready_dt(&led)) { gpio_pin_configure_dt(&led, GPIO_OUTPUT_ACTIVE); }
 	if (gpio_is_ready_dt(&led_red_spec)) { gpio_pin_configure_dt(&led_red_spec, GPIO_OUTPUT_INACTIVE); }
 	if (gpio_is_ready_dt(&led_green_spec)) { gpio_pin_configure_dt(&led_green_spec, GPIO_OUTPUT_INACTIVE); }
 	if (gpio_is_ready_dt(&led_blue_spec)) { gpio_pin_configure_dt(&led_blue_spec, GPIO_OUTPUT_INACTIVE); }
@@ -701,7 +901,7 @@ int main(void) {
 	bt_conn_auth_info_cb_register(&auth_info_cb);
 
 	/* Generate a unique, constant 6-digit PIN from Hardware FICR DeviceAddress */
-	generated_passkey = (NRF_FICR->DEVICEADDR[0] % 900000) + 100000;
+	generated_passkey = (nrf_ficr_deviceaddr_get(NRF_FICR, 0) % 900000) + 100000;
 	bt_passkey_set(generated_passkey);
 	printk("----------------------------------\n");
 	printk("DEVICE UNIQUE PIN: %06u\n", generated_passkey);
@@ -713,6 +913,8 @@ int main(void) {
 		return 0;
 	}
 
+	bt_conn_cb_register(&conn_callbacks_phy);
+
 	if (IS_ENABLED(CONFIG_BT_SETTINGS)) {
 		settings_load();
 	}
@@ -720,9 +922,12 @@ int main(void) {
 	/* Initialize NFC after BT is ready so we can fetch the device address */
 	setup_nfc();
 
+	/* Initialize OLED display */
+	oled_init();
+
 	k_work_init(&adv_start_work, adv_start_handler);
 
-	k_work_submit(&bt_ready_work);
+	bt_ready_init();
 	k_thread_create(&audio_thread_data, audio_stack, K_THREAD_STACK_SIZEOF(audio_stack), audio_thread, NULL, NULL, NULL, 2, K_FP_REGS, K_NO_WAIT);
 	k_thread_create(&sensor_thread_data, sensor_stack, K_THREAD_STACK_SIZEOF(sensor_stack), sensor_thread, NULL, NULL, NULL, 3, K_FP_REGS, K_NO_WAIT);
 
@@ -733,6 +938,10 @@ int main(void) {
 	/* Initialize and start periodic status monitoring */
 	k_work_init_delayable(&status_work, status_work_handler);
 	k_work_reschedule(&status_work, K_NO_WAIT);
+
+	/* Initialize and start periodic OLED update */
+	k_work_init_delayable(&oled_work, oled_work_handler);
+	k_work_reschedule(&oled_work, K_SECONDS(1));
 
 	while (1) {
 		/* The main loop is now very light, everything is handled by threads and workqueues.

@@ -1,0 +1,482 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>nRF52840 Bluetooth Sensor Hub: LinkedIn Showcase</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700;900&family=JetBrains+Mono:wght@400;700&display=swap');
+
+  :root {
+    --primary: #0a66c2;
+    --primary-light: #e8f1fb;
+    --dark: #1a1a2e;
+    --text: #2c2c2c;
+    --text-dim: #666;
+    --accent: #e74c3c;
+    --green: #27ae60;
+    --border: #d0d7de;
+    --bg: #ffffff;
+    --card: #f8fafb;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    color: var(--text);
+    background: var(--bg);
+    font-size: 10pt;
+    line-height: 1.5;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+    max-width: 210mm;
+    margin: 0 auto;
+    padding: 16mm 18mm;
+  }
+
+  /* --- Print --- */
+  @page { size: A4; margin: 14mm 16mm; }
+
+  @media print {
+    body { padding: 0; font-size: 9pt; }
+  }
+
+  /* Prevent diagrams, tables, and key sections from being split across pages */
+  .diagram, table, .highlights, .highlight-item, .flow-col { page-break-inside: avoid; }
+  h2, h3 { page-break-after: avoid; }
+  
+  /* Force Security Architecture section to start on new page to keep it together */
+  .security-section { page-break-before: always; }
+
+  /* --- Typography --- */
+  h1 { font-size: 22pt; font-weight: 900; color: var(--dark); letter-spacing: -0.5px; margin-bottom: 2px; }
+  h1 span { font-weight: 300; color: var(--primary); }
+  h2 { font-size: 12pt; font-weight: 700; color: var(--primary); text-transform: uppercase; letter-spacing: 1.5px; margin: 16px 0 8px 0; padding-bottom: 4px; border-bottom: 2px solid var(--primary); }
+  h3 { font-size: 10.5pt; font-weight: 700; color: var(--dark); margin: 12px 0 5px 0; }
+  p { margin-bottom: 8px; }
+  strong { font-weight: 700; }
+
+  .subtitle { font-size: 11.5pt; color: var(--text-dim); font-weight: 400; margin-bottom: 4px; }
+  .meta { font-size: 8.5pt; color: var(--text-dim); margin-bottom: 16px; }
+  .meta a { color: var(--primary); text-decoration: none; font-weight: 600; }
+
+  .summary { background: var(--primary-light); border-left: 4px solid var(--primary); padding: 10px 14px; border-radius: 0 6px 6px 0; margin: 8px 0 12px 0; font-size: 9.5pt; }
+
+  /* --- Tables --- */
+  table { width: 100%; border-collapse: collapse; margin: 8px 0 14px 0; font-size: 9.5pt; }
+  th { background: var(--dark); color: #fff; font-weight: 700; text-align: left; padding: 7px 10px; font-size: 8.5pt; text-transform: uppercase; letter-spacing: 0.8px; }
+  td { padding: 6px 10px; border-bottom: 1px solid #e8e8e8; }
+  tr:nth-child(even) td { background: #f9f9fb; }
+
+  /* --- Diagram System --- */
+  .diagram { background: #f4f6f9; border: 1px solid var(--border); border-radius: 8px; padding: 14px; margin: 8px 0 12px 0; }
+  .diagram-title { font-size: 7.5pt; text-transform: uppercase; letter-spacing: 2px; color: var(--primary); font-weight: 700; margin-bottom: 10px; text-align: center; }
+
+  .flow-row { display: flex; align-items: stretch; justify-content: center; gap: 10px; flex-wrap: nowrap; }
+  .flow-col { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+
+  .box {
+    border: 2px solid var(--dark);
+    border-radius: 8px;
+    padding: 8px 14px;
+    text-align: center;
+    font-size: 8.5pt;
+    font-weight: 600;
+    background: #fff;
+    min-width: 100px;
+    line-height: 1.4;
+  }
+  .box.primary { border-color: var(--primary); background: var(--primary-light); color: var(--primary); }
+  .box.dark { background: var(--dark); color: #fff; border-color: var(--dark); }
+  .box.accent { border-color: var(--accent); background: #fdf0ef; color: var(--accent); }
+  .box.green { border-color: var(--green); background: #eafaf1; color: var(--green); }
+  .box.wide { min-width: 200px; }
+  .box.full { width: 100%; }
+  .box small { display: block; font-weight: 400; font-size: 7.5pt; color: var(--text-dim); margin-top: 2px; }
+
+  .arrow-down { font-size: 16pt; color: var(--dark); line-height: 1; text-align: center; }
+  .arrow-right { font-size: 14pt; color: var(--dark); line-height: 1; display: flex; align-items: center; }
+  .arrow-split { display: flex; justify-content: center; gap: 60px; position: relative; }
+  .arrow-split::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 40%;
+    height: 2px;
+    background: var(--dark);
+  }
+
+  .connector { width: 2px; height: 14px; background: var(--dark); margin: 0 auto; }
+  .connector-h { height: 2px; width: 30px; background: var(--dark); }
+
+  .badge-row { display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; margin: 10px 0; }
+  .badge { display: inline-block; background: var(--dark); color: #fff; padding: 3px 10px; border-radius: 20px; font-size: 7.5pt; font-weight: 600; letter-spacing: 0.5px; }
+  .badge.blue { background: var(--primary); }
+
+  /* --- Highlight Box --- */
+  .highlights {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    margin: 10px 0;
+  }
+  .highlight-item {
+    display: flex;
+    gap: 8px;
+    align-items: flex-start;
+    padding: 8px 10px;
+    background: var(--card);
+    border-radius: 6px;
+    border: 1px solid #e8ecf0;
+  }
+  .highlight-item .icon {
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    background: var(--primary);
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11pt;
+    font-weight: 900;
+    flex-shrink: 0;
+    margin-top: 2px;
+  }
+  .highlight-item .hl-text { font-size: 8.5pt; line-height: 1.4; }
+  .highlight-item .hl-text strong { display: block; font-size: 9pt; color: var(--dark); }
+
+  .footer { text-align: center; font-size: 8pt; color: var(--text-dim); margin-top: 20px; padding-top: 10px; border-top: 1px solid var(--border); }
+  .footer a { color: var(--primary); text-decoration: none; font-weight: 600; }
+
+  /* --- Comparison Table --- */
+  .compare-table td:first-child { font-weight: 600; color: var(--accent); }
+  .compare-table td:last-child { font-weight: 600; color: var(--green); }
+</style>
+</head>
+<body>
+
+<div class="content">
+  <h1>nRF52840 Bluetooth Sensor Hub</h1>
+  <div class="subtitle">Headless IoT Platform with NFC-Assisted Secure Pairing</div>
+  <div class="meta">
+    <strong>Michael Neumüller</strong> · <a href="https://www.linkedin.com/in/michael-neumueller1/">linkedin.com/in/michael-neumueller1</a> · March 2026
+  </div>
+  <div style="font-size: 8pt; color: var(--primary); margin-bottom: 10px; font-weight: 600;">
+    <a href="https://www.linkedin.com/posts/activity-7434496625496092672-w1AW/" style="color: var(--primary); text-decoration: none;">▶ Watch Demo Video on LinkedIn</a>
+  </div>
+  <div style="width: 100%; margin-bottom: 14px; border-radius: 10px; overflow: hidden; border: 1px solid var(--border);">
+    <img src="../nRF52840-Cover.jpg" alt="nRF52840 Bluetooth Sensor Hub" style="width: 100%; height: auto; display: block;">
+  </div>
+
+  <div class="summary">
+    A <strong>professional prototype sensor platform</strong> built on the <strong>Nordic nRF52840</strong> (ARM Cortex-M4F) running <strong>Zephyr RTOS</strong>, demonstrating a fully headless multi-sensor BLE beacon architecture. The implementation addresses a key IoT UX challenge: <strong>secure device onboarding without physical user interface</strong>: by combining NFC Type 2 Tag emulation with hardware-derived cryptographic pairing, enabling seamless tap-to-connect operation from any NFC-enabled smartphone.
+  </div>
+
+  <h2>Technology Stack</h2>
+  <table>
+    <tr><th style="width:25%;">Layer</th><th>Technology</th></tr>
+    <tr><td><strong>MCU / SoC</strong></td><td>Nordic nRF52840: ARM Cortex-M4F, 1 MB Flash, 256 KB RAM</td></tr>
+    <tr><td><strong>RTOS</strong></td><td>Zephyr RTOS (preemptive multithreading, workqueue scheduling)</td></tr>
+    <tr><td><strong>Connectivity</strong></td><td>Bluetooth 5.0 LE (1M / 2M PHY), NFC Type 2 Tag (NDEF)</td></tr>
+    <tr><td><strong>Security</strong></td><td>BLE Security Level 4: AES-128 CCM, ECDH key exchange</td></tr>
+    <tr><td><strong>Sensors</strong></td><td>LSM6DS3TR-C 6-axis IMU (I²C), PDM MEMS Microphone</td></tr>
+    <tr><td><strong>Power</strong></td><td>LiPo 3.3–4.15 V, BQ25100 charge IC, adaptive TX power</td></tr>
+    <tr><td><strong>Interface</strong></td><td>Web Bluetooth API dashboard: zero native app required</td></tr>
+    <tr><td><strong>Hardware</strong></td><td>Seeed Studio XIAO nRF52840 Sense</td></tr>
+  </table>
+
+  <h2>System Architecture</h2>
+  <div class="diagram">
+    <div class="diagram-title">End-to-End System Overview</div>
+
+    <!-- Sensor Layer -->
+    <div class="flow-row" style="margin-bottom: 4px;">
+      <div class="box" style="flex:1;">IMU 6-Axis<small>Accel + Gyro @ 52 Hz</small></div>
+      <div class="box" style="flex:1;">PDM Microphone<small>Audio @ 16 kHz</small></div>
+      <div class="box" style="flex:1;">Battery ADC<small>SMA Filter (12 samples)</small></div>
+      <div class="box" style="flex:1;">RGB LED<small>Audio-Reactive Feedback</small></div>
+    </div>
+    <div class="arrow-down">&#9660;</div>
+
+    <!-- RTOS Layer -->
+    <div class="box dark full" style="margin: 4px 0;">
+      <strong>Zephyr RTOS Kernel</strong><br>
+      <span style="font-weight: 300; font-size: 8pt;">Sensor Thread (P3) &nbsp;·&nbsp; Audio Thread (P2) &nbsp;·&nbsp; Main Thread + Workqueues</span>
+    </div>
+    <div class="arrow-down">&#9660;</div>
+
+    <!-- GATT Layer -->
+    <div class="box primary full" style="margin: 4px 0;">
+      <strong>Custom BLE GATT Service: 6 Characteristics</strong><br>
+      <span style="font-size: 8pt; font-weight:400;">Accelerometer · Gyroscope · Audio Level · TX Power · Battery · System Reset</span><br>
+      <span style="font-size: 7.5pt; font-weight:700; color: var(--accent);">ALL require authenticated pairing (BT_GATT_PERM_*_AUTHEN)</span>
+    </div>
+    <div class="arrow-down">&#9660;</div>
+
+    <!-- Radio Layer -->
+    <div class="flow-row" style="margin: 4px 0;">
+      <div class="box dark" style="flex:1;">BLE 5.0 Radio<small>1M / 2M PHY · Adaptive TX Power</small></div>
+      <div class="box green" style="flex:1;">NFC T2T Tag<small>NDEF URI with embedded PIN</small></div>
+    </div>
+
+    <div style="text-align: center; margin: 8px 0 4px 0; font-size: 8pt; letter-spacing: 3px; font-weight: 700; color: var(--text-dim);">▼ &nbsp; WIRELESS &nbsp; ▼</div>
+
+    <!-- Client Layer -->
+    <div class="box primary full">
+      <strong>Smartphone / Browser</strong><br>
+      <span style="font-size: 8pt; font-weight:400;">Web Bluetooth Dashboard: Real-Time Charts · Spectrogram · Power Mgmt · CSV Export</span>
+    </div>
+  </div>
+
+  <div class="security-section">
+  <h2>Security Architecture &amp; NFC Workflow</h2>
+
+  <h3>The Challenge: Secure Pairing Without a Screen</h3>
+  <p>Traditional BLE devices display a pairing PIN on a screen or use insecure "Just Works" pairing. A headless sensor node has neither a display nor input: yet must enforce strong authentication to protect sensor data from unauthorized access.</p>
+
+  <h3>The Solution: Hardware-Derived PIN via NFC Handoff</h3>
+  <p>A three-layer security architecture turns NFC into a physical-proximity authentication channel:</p>
+
+  <div class="diagram">
+    <div class="diagram-title">NFC-Assisted Secure Pairing Flow</div>
+
+    <!-- Step 1 -->
+    <div class="flow-col">
+      <div class="box dark wide">
+        <strong>① Read Hardware ID (FICR)</strong>
+        <small>Factory-burned, immutable, unique per chip</small>
+      </div>
+      <div class="connector"></div>
+      <div class="box dark wide">
+        <strong>② Derive 6-Digit Passkey</strong>
+        <small>PIN = (DeviceAddress % 900000) + 100000</small>
+        <small>Deterministic: same PIN every boot, no storage</small>
+      </div>
+      <div class="connector"></div>
+
+      <!-- Split into two paths -->
+      <div class="flow-row" style="width:100%; justify-content: center; gap: 30px;">
+        <div class="flow-col" style="flex:1; max-width: 240px;">
+          <div style="height:2px; width:100%; background: var(--dark);"></div>
+          <div class="connector"></div>
+          <div class="box primary">
+            <strong>③a Register with BLE SMP</strong>
+            <small>Passkey Display mode (Level 4)</small>
+            <small>Enables AES-128 CCM encryption</small>
+          </div>
+        </div>
+        <div class="flow-col" style="flex:1; max-width: 240px;">
+          <div style="height:2px; width:100%; background: var(--dark);"></div>
+          <div class="connector"></div>
+          <div class="box green">
+            <strong>③b Encode PIN in NFC Tag</strong>
+            <small>NDEF URI → https://…/?pin=XXXXXX</small>
+            <small>Physical proximity = trust anchor</small>
+          </div>
+        </div>
+      </div>
+
+      <div class="connector"></div>
+
+      <!-- User interaction -->
+      <div class="box accent wide" style="min-width: 340px;">
+        <strong>④ User Taps Phone on Device</strong>
+        <small>Browser opens Web UI → PIN auto-displayed (20 s expiry) → User enters PIN in OS pairing dialog</small>
+      </div>
+      <div class="connector"></div>
+      <div class="box dark wide" style="min-width: 340px;">
+        <strong>⑤ Encrypted Bond Established</strong>
+        <small>AES-128 CCM active · Bond stored in NVS Flash · Persists across reboots</small>
+      </div>
+    </div>
+  </div>
+
+  <h3>GATT-Level Security Enforcement</h3>
+  <p>Every characteristic enforces <code>READ_AUTHEN</code> / <code>WRITE_AUTHEN</code> permissions:</p>
+  <table style="margin-top: 4px;">
+    <tr><th>Protection</th><th>Effect</th></tr>
+    <tr><td><strong>No data leaks</strong></td><td>Unauthenticated observers cannot read any sensor values</td></tr>
+    <tr><td><strong>No unauthorized control</strong></td><td>Remote bootloader reset requires a bonded, encrypted connection</td></tr>
+    <tr><td><strong>Mandatory encryption</strong></td><td>All traffic is AES-128 CCM encrypted after successful pairing</td></tr>
+    <tr><td><strong>Persistent bonding</strong></td><td>Credentials survive reboots via Zephyr NVS/Settings subsystem</td></tr>
+  </table>
+
+  <h3>Comparison: Traditional vs. This Approach</h3>
+  <table class="compare-table">
+    <tr><th>Traditional Approach</th><th>This Solution</th></tr>
+    <tr><td>PIN printed on label: static, easily shared</td><td>PIN derived from silicon: unique per device</td></tr>
+    <tr><td>"Just Works" pairing: zero authentication</td><td>Passkey Display (Level 4): MITM-resistant</td></tr>
+    <tr><td>Requires companion app for onboarding</td><td>NFC tap opens standard browser: zero app install</td></tr>
+    <tr><td>PIN visible only during setup wizard</td><td>PIN in URL, auto-expires in Web UI (20 seconds)</td></tr>
+  </table>
+  </div>
+
+  <h2>Real-Time System Architecture</h2>
+
+  <h3>Preemptive Multi-Threading Model</h3>
+  <p>Three concurrent threads on Zephyr's preemptive scheduler plus two asynchronous workqueue tasks for non-blocking power management:</p>
+
+  <div class="diagram">
+    <div class="diagram-title">Zephyr RTOS Threading &amp; Data Pipeline</div>
+    <div style="display: flex; flex-direction: column; gap: 8px;">
+
+      <!-- Audio Thread -->
+      <div style="display: flex; align-items: stretch; gap: 0;">
+        <div style="background: var(--accent); color: #fff; writing-mode: vertical-rl; text-orientation: mixed; padding: 6px 5px; border-radius: 6px 0 0 6px; font-size: 7pt; font-weight: 700; letter-spacing: 1px; display: flex; align-items: center; justify-content: center; min-width: 28px;">P 2</div>
+        <div style="flex: 1; border: 2px solid var(--accent); border-left: none; border-radius: 0 8px 8px 0; padding: 10px 14px; background: #fdf0ef;">
+          <strong style="color: var(--accent);">Audio Thread</strong><br>
+          <span style="font-size: 8.5pt;">PDM Microphone → 512-sample blocks @ 16 kHz → <strong>RMS</strong> (loudness) + <strong>ZCR</strong> (zero-crossing rate) → BLE GATT Notify → RGB LED audio-reactive color mapping (silence → blue → green → yellow → red)</span>
+        </div>
+      </div>
+
+      <!-- Sensor Thread -->
+      <div style="display: flex; align-items: stretch; gap: 0;">
+        <div style="background: var(--primary); color: #fff; writing-mode: vertical-rl; text-orientation: mixed; padding: 6px 5px; border-radius: 6px 0 0 6px; font-size: 7pt; font-weight: 700; letter-spacing: 1px; display: flex; align-items: center; justify-content: center; min-width: 28px;">P 3</div>
+        <div style="flex: 1; border: 2px solid var(--primary); border-left: none; border-radius: 0 8px 8px 0; padding: 10px 14px; background: var(--primary-light);">
+          <strong style="color: var(--primary);">Sensor Thread</strong><br>
+          <span style="font-size: 8.5pt;">LSM6DS3TR-C IMU → Accel (X/Y/Z) + Gyro (X/Y/Z) @ 52 Hz → Little-endian int32 serialization → BLE GATT Notify to all connected clients</span>
+        </div>
+      </div>
+
+      <!-- Main Thread -->
+      <div style="display: flex; align-items: stretch; gap: 0;">
+        <div style="background: var(--green); color: #fff; writing-mode: vertical-rl; text-orientation: mixed; padding: 6px 5px; border-radius: 6px 0 0 6px; font-size: 7pt; font-weight: 700; letter-spacing: 1px; display: flex; align-items: center; justify-content: center; min-width: 28px;">MAIN</div>
+        <div style="flex: 1; border: 2px solid var(--green); border-left: none; border-radius: 0 8px 8px 0; padding: 10px 14px; background: #eafaf1;">
+          <strong style="color: var(--green);">Main Thread + Delayed Workqueues</strong><br>
+          <span style="font-size: 8.5pt;">
+            <strong>Battery Work:</strong> ADC burst → SMA(12) filter → SoC% estimation · Interval: 1 s (boot) → 10 s (steady)<br>
+            <strong>Status Work:</strong> BQ25100 charge IC monitoring · USB VBUS detection · Charge current control (1 s poll)<br>
+            <strong>TX Power Logic:</strong> SoC &gt; 20% or USB → +8 dBm (max range) · SoC &lt; 20% battery → −4 dBm (power save)
+          </span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <h3>Custom BLE GATT Service</h3>
+  <p>One primary service, six characteristics covering the full sensor pipeline and system control:</p>
+  <table>
+    <tr><th>Characteristic</th><th>UUID Suffix</th><th>Type</th><th>Payload</th></tr>
+    <tr><td><strong>Accelerometer</strong></td><td><code>…def1</code></td><td>Notify</td><td>3× int32 LE: X, Y, Z in milli-m/s²</td></tr>
+    <tr><td><strong>Gyroscope</strong></td><td><code>…def2</code></td><td>Notify</td><td>3× int32 LE: X, Y, Z in milli-°/s</td></tr>
+    <tr><td><strong>Audio Level</strong></td><td><code>…def3</code></td><td>Notify</td><td>uint32 RMS + uint32 ZCR per block</td></tr>
+    <tr><td><strong>TX Power</strong></td><td><code>…def4</code></td><td>Read / Notify</td><td>int8: current power in dBm</td></tr>
+    <tr><td><strong>Battery</strong></td><td><code>…def5</code></td><td>Read / Notify</td><td>uint16 mV + uint8 SoC% + uint8 status</td></tr>
+    <tr><td><strong>System Reset</strong></td><td><code>…def6</code></td><td>Write</td><td>Write 0x01 → reboot to UF2 bootloader</td></tr>
+  </table>
+
+  <h3>Intelligent Power Management</h3>
+  <div class="diagram">
+    <div class="diagram-title">Battery-Aware Adaptive TX Power Pipeline</div>
+    <div class="flow-row" style="gap: 6px; flex-wrap: nowrap; align-items: center;">
+      <div class="box" style="flex: 1;">ADC Read<small>Pin P0.14</small></div>
+      <div class="arrow-right">&#9654;</div>
+      <div class="box" style="flex: 1;">Burst ×2<small>+ Average</small></div>
+      <div class="arrow-right">&#9654;</div>
+      <div class="box" style="flex: 1;">SMA Filter<small>12 samples</small></div>
+      <div class="arrow-right">&#9654;</div>
+      <div class="box" style="flex: 1;">SoC Estimate<small>3.3 to 4.15 V</small></div>
+      <div class="arrow-right">&#9654;</div>
+      <div class="flow-col" style="flex: 1.5; gap: 4px;">
+        <div class="box green" style="width: 100%;">SoC &gt; 20% or USB<small><strong>TX = +8 dBm</strong> (max range)</small></div>
+        <div class="box accent" style="width: 100%;">SoC &lt; 20% battery<small><strong>TX = −4 dBm</strong> (power save)</small></div>
+      </div>
+    </div>
+  </div>
+
+  <h2>Web Bluetooth Dashboard</h2>
+  <p>A fully responsive browser-native monitoring interface via the <strong>Web Bluetooth API</strong>: zero native app installation required. Works on Chrome and Edge across all platforms.</p>
+
+  <table>
+    <tr><th style="width:30%;">Feature</th><th>Technical Detail</th></tr>
+    <tr><td><strong>Real-Time Telemetry</strong></td><td>Acceleration &amp; gyroscope rolling charts (Chart.js, 150-point buffer, pinch-to-zoom)</td></tr>
+    <tr><td><strong>Audio Analysis</strong></td><td>1024-point FFT, A-weighted Power Spectral Density, live Canvas 2D waterfall spectrogram</td></tr>
+    <tr><td><strong>Power Management</strong></td><td>Battery voltage, SoC %, charge status indicator, TX power with dBm → mW conversion</td></tr>
+    <tr><td><strong>NFC PIN Integration</strong></td><td>URL parameter <code>?pin=XXXXXX</code> auto-displays passkey with 20 s animated expiry timer</td></tr>
+    <tr><td><strong>Remote System Control</strong></td><td>One-click reboot to UF2 bootloader for wireless firmware updates</td></tr>
+    <tr><td><strong>Performance</strong></td><td>Visibility API throttling, 30 FPS render cap, EMA-smoothed audio, tab-suspend protection</td></tr>
+    <tr><td><strong>Export</strong></td><td>CSV telemetry session export for offline analysis</td></tr>
+  </table>
+
+  <h2>Key Engineering Highlights</h2>
+  <div class="highlights">
+    <div class="highlight-item">
+      <div class="icon">1</div>
+      <div class="hl-text">
+        <strong>Zero-UI Onboarding</strong>
+        NFC tag + Web Bluetooth = no display, no companion app, no manual PIN entry. Tap the device and go.
+      </div>
+    </div>
+    <div class="highlight-item">
+      <div class="icon">2</div>
+      <div class="hl-text">
+        <strong>Hardware-Rooted Trust</strong>
+        Passkey derived from immutable FICR silicon ID. Deterministic: no RNG, no provisioning step, no key storage.
+      </div>
+    </div>
+    <div class="highlight-item">
+      <div class="icon">3</div>
+      <div class="hl-text">
+        <strong>Defense in Depth</strong>
+        NFC (physical proximity) → BLE SMP (cryptographic gate) → GATT AUTHEN (per-characteristic access control).
+      </div>
+    </div>
+    <div class="highlight-item">
+      <div class="icon">4</div>
+      <div class="hl-text">
+        <strong>Battery-Aware Radio</strong>
+        Dynamic TX power preserves energy at low SoC without sacrificing range when power is available.
+      </div>
+    </div>
+    <div class="highlight-item">
+      <div class="icon">5</div>
+      <div class="hl-text">
+        <strong>Non-Blocking Architecture</strong>
+        All I/O is threaded or workqueue-driven. Main loop sleeps at 1 Hz. Zero busy-wait patterns anywhere.
+      </div>
+    </div>
+    <div class="highlight-item">
+      <div class="icon">6</div>
+      <div class="hl-text">
+        <strong>Bluetooth 5.0 Optimized</strong>
+        2M PHY, extended data length (69 B), optimized intervals (15–30 ms), up to 3 simultaneous connections.
+      </div>
+    </div>
+    <div class="highlight-item">
+      <div class="icon">7</div>
+      <div class="hl-text">
+        <strong>Production Patterns</strong>
+        NVS-backed bonding, SMA-filtered ADC, graceful BLE reconnect, RGB startup self-test sequence.
+      </div>
+    </div>
+    <div class="highlight-item">
+      <div class="icon">8</div>
+      <div class="hl-text">
+        <strong>Remote Firmware Update</strong>
+        Wireless bootloader reset via authenticated BLE write: no physical access to the device required.
+      </div>
+    </div>
+  </div>
+
+  <div class="badge-row" style="margin-top: 16px;">
+    <span class="badge">Zephyr RTOS</span>
+    <span class="badge blue">Nordic nRF52840</span>
+    <span class="badge">BLE 5.0</span>
+    <span class="badge blue">NFC T2T</span>
+    <span class="badge">Web Bluetooth</span>
+    <span class="badge blue">AES-128 CCM</span>
+    <span class="badge">Cortex-M4F</span>
+    <span class="badge blue">NDEF</span>
+  </div>
+
+  <div class="footer">
+    <strong>Michael Neumüller</strong> · <a href="https://www.linkedin.com/in/michael-neumueller1/">linkedin.com/in/michael-neumueller1</a><br>
+    <span style="font-size: 7.5pt; margin-top: 4px; display: inline-block;">Built with Zephyr RTOS · Nordic nRF Connect SDK · Web Bluetooth API: March 2026</span>
+  </div>
+</div>
+
+</body>
+</html>

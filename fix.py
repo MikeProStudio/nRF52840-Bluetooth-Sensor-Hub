@@ -67,13 +67,31 @@
     };
 };
 
-/* PDM Microphone (XIAO Sense: CLK=P1.00, DATA=P0.16)
-   Board-DTSI hat pinctrl/pins + clock-source bereits definiert */
+/* PDM Microphone (XIAO Sense: CLK=P1.00, DATA=P0.16) */
 &pdm0 {
 	status = "okay";
+	pinctrl-0 = <&pdm0_default>;
+	pinctrl-1 = <&pdm0_sleep>;
+	pinctrl-names = "default", "sleep";
+	clock-source = "PCLK32M";
 };
 
 &pinctrl {
+	pdm0_default: pdm0_default {
+		group1 {
+			psels = <NRF_PSEL(PDM_CLK, 1, 0)>, /* P1.00 */
+				<NRF_PSEL(PDM_DIN, 0, 16)>; /* P0.16 */
+		};
+	};
+
+	pdm0_sleep: pdm0_sleep {
+		group1 {
+			psels = <NRF_PSEL(PDM_CLK, 1, 0)>,
+				<NRF_PSEL(PDM_DIN, 0, 16)>;
+			low-power-enable;
+		};
+	};
+
 };
 
 /* ADC Configuration for Battery Monitoring (AIN7 = P0.31) */
@@ -102,6 +120,8 @@
     status = "disabled";
 };
 
+/* I2C1: External OLED Display (SSD1306, P0.04=SDA, P0.05=SCL)
+   Pinmux ist bereits in xiao_ble-pinctrl.dtsi definiert */
 &i2c1 {
     status = "disabled";
 };
@@ -123,10 +143,10 @@
             segment-offset = <0>;
             page-offset = <0>;
             display-offset = <0>;
-            multiplex-ratio = <63>;
-            segment-remap;
-            com-invdir;
-            prechargep = <0x22>;
+        multiplex-ratio = <63>;
+        segment-remap;
+        com-invdir;
+        prechargep = <0x22>;
             status = "okay";
         };
     };
