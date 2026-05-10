@@ -126,32 +126,28 @@
     status = "disabled";
 };
 
+/* I2C1: Hardware-TWIM für OLED (P0.04=SDA, P0.05=SCL, 400kHz Fast Mode)
+   Pinctrl+Pins sind bereits in xiao_ble-pinctrl.dtsi definiert */
 &i2c1 {
-    status = "disabled";
-};
+	compatible = "nordic,nrf-twim";
+	clock-frequency = <I2C_BITRATE_FAST>;
+	pinctrl-0 = <&i2c1_default>;
+	pinctrl-1 = <&i2c1_sleep>;
+	pinctrl-names = "default", "sleep";
+	zephyr,concat-buf-size = <1056>;
 
-/ {
-    i2c_bb: i2c-bitbang {
-        compatible = "gpio-i2c";
-        scl-gpios = <&gpio0 5 GPIO_ACTIVE_HIGH>;
-        sda-gpios = <&gpio0 4 (GPIO_ACTIVE_HIGH | GPIO_OPEN_DRAIN)>;
-        #address-cells = <1>;
-        #size-cells = <0>;
-        clock-frequency = <I2C_BITRATE_STANDARD>;
-
-        ssd1306: ssd1306@3c {
-            compatible = "solomon,ssd1306fb";
-            reg = <0x3c>;
-            width = <128>;
-            height = <64>;
-            segment-offset = <0>;
-            page-offset = <0>;
-            display-offset = <0>;
-            multiplex-ratio = <63>;
-            segment-remap;
-            com-invdir;
-            prechargep = <0x22>;
-            status = "okay";
-        };
-    };
+	ssd1306: ssd1306@3c {
+		compatible = "solomon,ssd1306fb";
+		reg = <0x3c>;
+		width = <128>;
+		height = <64>;
+		segment-offset = <0>;
+		page-offset = <0>;
+		display-offset = <0>;
+		multiplex-ratio = <63>;
+		segment-remap;
+		com-invdir;
+		prechargep = <0x22>;
+		status = "okay";
+	};
 };
