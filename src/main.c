@@ -108,6 +108,9 @@ struct oled_settings {
 	uint8_t invert;
 	uint8_t display_sleep_min;   /* 0=never */
 	uint8_t led_enable;          /* 0=off, 1=on */
+	uint8_t deepsleep_enable;    /* 0=off(default), 1=on */
+	uint8_t deepsleep_interval;  /* 0=10s, 1=1min, 2=10min, 3=1h, 4=10h, 5=24h */
+	uint8_t deepsleep_oled;      /* 0=off, 1=standby */
 } __packed;
 
 static struct oled_settings oled_settings = {
@@ -121,9 +124,29 @@ static struct oled_settings oled_settings = {
 	.invert = 0,
 	.display_sleep_min = 0,
 	.led_enable = 1,
+	.deepsleep_enable = 0,
+	.deepsleep_interval = 1,
+	.deepsleep_oled = 0,
 };
 
 static uint64_t oled_last_activity;
+
+/* Deepsleep */
+#define DEEP_SLEEP_MAGIC 0x42
+static struct k_work_delayable deepsleep_work;
+
+static uint32_t deepsleep_interval_sec(uint8_t idx)
+{
+	switch (idx) {
+	case 0:  return 10;
+	case 1:  return 60;
+	case 2:  return 600;
+	case 3:  return 3600;
+	case 4:  return 36000;
+	case 5:  return 86400;
+	default: return 60;
+	}
+}
 
 /* OLED Display (SSD1306 128x64, P0.04=SDA, P0.05=SCL, VCC=P1.11) */
 #include <hal/nrf_gpio.h>
@@ -158,6 +181,13 @@ static void read_battery_voltage_impl(void);
 static void update_tx_power_based_on_battery_impl(void);
 static void start_advertising(void);
 static void oled_check_sleep(void);
+static void enter_deep_sleep(uint32_t sec);
+static void wake_from_deep_sleep(void);
+static void oled_clear(void);
+static void oled_puts(uint16_t x, uint16_t y, const char *str);
+static void oled_flush(void);
+static int oled_init(void);
+static k_tid_t main_thread_id;
 
 /* OLED + BT state */
 static bool bt_connected_flag;
@@ -335,9 +365,18 @@ static ssize_t write_reset(struct bt_conn *conn, const struct bt_gatt_attr *attr
 	uint8_t val = ((uint8_t *)buf)[0];
 	if (val == 1) {
 		printk("SYSTEM RESET TO BOOTLOADER REQUESTED...\n");
-		/* Nordic-specific: Jump to Bootloader via GPREGRET */
-		nrf_power_gpregret_set(NRF_POWER, 0, 0x57); /* Standard Nordic Bootloader Magic (Enter Bootloader) */
+		nrf_power_gpregret_set(NRF_POWER, 0, 0x57);
 		NVIC_SystemReset();
+	}
+	if (val == 3) {
+		printk("DEEP SLEEP TRIGGERED VIA RESET CHAR\n");
+		oled_settings.deepsleep_enable = 1;
+		k_work_cancel_delayable(&deepsleep_work);
+		k_work_reschedule(&deepsleep_work, K_MSEC(200));
+	}
+	if (val == 4) {
+		printk("WAKE FROM DEEP SLEEP VIA RESET CHAR\n");
+		wake_from_deep_sleep();
 	}
 	return len;
 }
@@ -370,6 +409,10 @@ static ssize_t write_oled_settings(struct bt_conn *conn, const struct bt_gatt_at
 	memcpy((uint8_t *)&oled_settings + offset, buf, len);
 	oled_apply_settings();
 	k_work_reschedule_for_queue(&oled_work_q, &oled_work, K_NO_WAIT);
+	if (!oled_settings.deepsleep_enable) {
+		k_work_cancel_delayable(&deepsleep_work);
+		printk("Deepsleep disabled\n");
+	}
 	printk("OLED settings updated\n");
 	return len;
 }
@@ -616,6 +659,61 @@ static struct k_thread sensor_thread_data;
 K_THREAD_STACK_DEFINE(audio_stack, 2048);
 K_THREAD_STACK_DEFINE(sensor_stack, 2048);
 
+/* Deepsleep: OLED-only cycling, threads keep running for BLE stability */
+#define DEEPSLEEP_DATA_WINDOW_MS 2500
+static volatile bool deepsleep_pending;
+static uint32_t deepsleep_sec_save;
+static volatile bool deepsleep_block_notify;
+static volatile bool deepsleep_send_once_audio;
+static volatile bool deepsleep_send_once_sensor;
+
+static void deepsleep_oled_sleep(void)
+{
+	if (!device_is_ready(oled_dev)) return;
+	display_blanking_on(oled_dev);
+}
+
+static void deepsleep_oled_wake(void)
+{
+	if (!device_is_ready(oled_dev)) return;
+	display_blanking_off(oled_dev);
+	display_set_contrast(oled_dev, oled_settings.contrast);
+	display_set_pixel_format(oled_dev, oled_settings.invert ? PIXEL_FORMAT_MONO10 : PIXEL_FORMAT_MONO01);
+	oled_clear();
+	oled_flush();
+}
+
+static void enter_deep_sleep(uint32_t sec)
+{
+	printk("DEEP SLEEP: entering cyclic OLED sleep interval=%us oled=%u\n", sec, oled_settings.deepsleep_oled);
+
+	oled_settings.deepsleep_enable = 1;
+	nrf_power_gpregret_set(NRF_POWER, 0, DEEP_SLEEP_MAGIC);
+	nrf_power_gpregret_set(NRF_POWER, 1, oled_settings.deepsleep_interval);
+
+	deepsleep_sec_save = sec;
+	deepsleep_pending = true;
+}
+
+static void deepsleep_work_handler(struct k_work *work)
+{
+	if (oled_settings.deepsleep_enable) {
+		enter_deep_sleep(deepsleep_interval_sec(oled_settings.deepsleep_interval));
+	}
+}
+
+static void wake_from_deep_sleep(void)
+{
+	if (!deepsleep_pending) return;
+	oled_settings.deepsleep_enable = 0;
+	deepsleep_pending = false;
+	deepsleep_block_notify = false;
+	deepsleep_oled_wake();
+	k_work_reschedule_for_queue(&oled_work_q, &oled_work, K_NO_WAIT);
+	k_wakeup(main_thread_id);
+	printk("WAKE FROM DEEP SLEEP completed\n");
+}
+
 static void audio_thread(void *p1, void *p2, void *p3)
 {
 	void *buffer;
@@ -725,7 +823,10 @@ static void audio_thread(void *p1, void *p2, void *p3)
 				}
 			}
 
-			if (bt_connected_flag) {
+			if (deepsleep_send_once_audio) {
+				deepsleep_send_once_audio = false;
+				bt_gatt_notify(NULL, &custom_svc.attrs[IDX_AUDIO_VAL], audio_level_buf, sizeof(audio_level_buf));
+			} else if (bt_connected_flag && !deepsleep_block_notify) {
 				bt_gatt_notify(NULL, &custom_svc.attrs[IDX_AUDIO_VAL], audio_level_buf, sizeof(audio_level_buf));
 			}
 			k_mem_slab_free(&audio_mem_slab, buffer);
@@ -766,8 +867,14 @@ static void sensor_thread(void *p1, void *p2, void *p3)
 			sys_put_le32(gy, &gyro_data.data[4]);
 			sys_put_le32(gz, &gyro_data.data[8]);
 			
-			bt_gatt_notify(NULL, &custom_svc.attrs[IDX_ACCEL_VAL], &accel_data, sizeof(accel_data));
-			bt_gatt_notify(NULL, &custom_svc.attrs[IDX_GYRO_VAL], &gyro_data, sizeof(gyro_data));
+			if (deepsleep_send_once_sensor) {
+				deepsleep_send_once_sensor = false;
+				bt_gatt_notify(NULL, &custom_svc.attrs[IDX_ACCEL_VAL], &accel_data, sizeof(accel_data));
+				bt_gatt_notify(NULL, &custom_svc.attrs[IDX_GYRO_VAL], &gyro_data, sizeof(gyro_data));
+			} else if (!deepsleep_block_notify) {
+				bt_gatt_notify(NULL, &custom_svc.attrs[IDX_ACCEL_VAL], &accel_data, sizeof(accel_data));
+				bt_gatt_notify(NULL, &custom_svc.attrs[IDX_GYRO_VAL], &gyro_data, sizeof(gyro_data));
+			}
 		}
 		k_msleep(20); /* Wiederhergestellt auf 50Hz wie vom User gewünscht */
 	}
@@ -1153,10 +1260,21 @@ static void oled_work_handler(struct k_work *work)
 }
 
 int main(void) {
+	main_thread_id = k_current_get();
 	if (gpio_is_ready_dt(&led_red_spec)) { gpio_pin_configure_dt(&led_red_spec, GPIO_OUTPUT_INACTIVE); }
 	if (gpio_is_ready_dt(&led_green_spec)) { gpio_pin_configure_dt(&led_green_spec, GPIO_OUTPUT_INACTIVE); }
 	if (gpio_is_ready_dt(&led_blue_spec)) { gpio_pin_configure_dt(&led_blue_spec, GPIO_OUTPUT_INACTIVE); }
-	
+
+	nrf_power_resetreas_clear(NRF_POWER,
+		NRF_POWER_RESETREAS_OFF_MASK | NRF_POWER_RESETREAS_DOG_MASK);
+	if (nrf_power_gpregret_get(NRF_POWER, 0) == DEEP_SLEEP_MAGIC) {
+		oled_settings.deepsleep_enable = 1;
+		oled_settings.deepsleep_interval = nrf_power_gpregret_get(NRF_POWER, 1);
+		nrf_power_gpregret_set(NRF_POWER, 0, 0);
+		nrf_power_gpregret_set(NRF_POWER, 1, 0);
+		printk("WOKE FROM DEEP SLEEP (interval idx %u)\n", oled_settings.deepsleep_interval);
+	}
+
 	usb_enable(NULL);
 
 	bt_conn_auth_cb_register(&auth_cb_display);
@@ -1211,10 +1329,38 @@ int main(void) {
 	k_work_init_delayable(&oled_work, oled_work_handler);
 	k_work_reschedule_for_queue(&oled_work_q, &oled_work, K_SECONDS(1));
 
+	k_work_init_delayable(&deepsleep_work, deepsleep_work_handler);
+
 	while (1) {
-		/* The main loop is now very light, everything is handled by threads and workqueues.
-		   We sleep for a longer time to save power. */
-		k_msleep(1000);
+		if (deepsleep_pending) {
+			deepsleep_block_notify = true;
+			deepsleep_oled_sleep();
+
+			while (deepsleep_pending && oled_settings.deepsleep_enable) {
+				k_sleep(K_SECONDS(deepsleep_sec_save));
+				if (!deepsleep_pending || !oled_settings.deepsleep_enable) break;
+
+				deepsleep_send_once_audio = true;
+				deepsleep_send_once_sensor = true;
+				if (oled_settings.deepsleep_oled) {
+					deepsleep_oled_wake();
+				}
+				k_work_reschedule_for_queue(&oled_work_q, &oled_work, K_NO_WAIT);
+				k_sleep(K_MSEC(DEEPSLEEP_DATA_WINDOW_MS));
+
+				if (!deepsleep_pending || !oled_settings.deepsleep_enable) break;
+				if (oled_settings.deepsleep_oled) {
+					deepsleep_oled_sleep();
+				}
+			}
+
+			deepsleep_block_notify = false;
+			deepsleep_pending = false;
+			deepsleep_oled_wake();
+			k_work_reschedule_for_queue(&oled_work_q, &oled_work, K_NO_WAIT);
+		} else {
+			k_msleep(500);
+		}
 	}
 	return 0;
 }
