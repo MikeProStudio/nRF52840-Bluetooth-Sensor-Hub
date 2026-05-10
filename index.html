@@ -536,23 +536,48 @@
 
     let bluetoothDevice = null;
     let bluetoothServer = null;
+    let manualDisconnect = false;
 
     async function disconnectDevice() {
+        manualDisconnect = true;
         if (bluetoothDevice) {
             console.log("Senior-UI: Explicitly disconnecting GATT server...");
             try {
-                // GATT Disconnect triggert 'gattserverdisconnected' Event
                 bluetoothDevice.gatt.disconnect();
             } catch (e) { console.log("Senior-UI: Disconnect error", e); }
         }
-        // Falls das Event nicht feuert, führen wir den Cleanup manuell durch
-        setTimeout(() => { if (bluetoothDevice) onDisconnected(); }, 500);
+        setTimeout(() => { if (bluetoothDevice && manualDisconnect) cleanupConnection(); }, 500);
+    }
+
+    function cleanupConnection() {
+        console.log("Senior-UI: Cleaning up connection state (manual disconnect).");
+        const ids = ['ax', 'ay', 'az', 'gx', 'gy', 'gz', 'rssi-val', 'batt-volt', 'batt-soc', 'tx-pcnt', 'tx-mw'];
+        ids.forEach(id => { const el = document.getElementById(id); if (el) el.innerText = '--'; });
+        document.getElementById('tactical-header').classList.remove('connected');
+        document.getElementById('status-text').innerText = 'SYSTEM OFFLINE';
+        document.getElementById('bt-peer').innerText = 'N/A';
+        const btn = document.getElementById('connect-btn');
+        btn.innerText = 'Initiate Tactical Uplink';
+        btn.classList.remove('disconnect');
+        document.getElementById('reset-btn').style.display = 'none';
+        stopRenderLoop();
+        if (bluetoothDevice) {
+            try { bluetoothDevice.removeEventListener('gattserverdisconnected', onDisconnected); } catch(e) {}
+        }
+        bluetoothDevice = null;
+        bluetoothServer = null;
+        window.currentBLEService = null;
+        manualDisconnect = false;
     }
 
     function onDisconnected() {
         console.log("Senior-UI: Global Disconnect Event fired.");
         
-        // Reset ALL data fields to signal dead connection
+        if (manualDisconnect) {
+            cleanupConnection();
+            return;
+        }
+        
         const ids = ['ax', 'ay', 'az', 'gx', 'gy', 'gz', 'rssi-val', 'batt-volt', 'batt-soc', 'tx-pcnt', 'tx-mw'];
         ids.forEach(id => { const el = document.getElementById(id); if (el) el.innerText = '--'; });
         
@@ -566,7 +591,6 @@
         
         stopRenderLoop();
         
-        // Auto-Reconnect: bis zu 3 Versuche mit Counter
         const MAX_ATTEMPTS = 3;
         let attempt = 0;
         const statusEl = document.getElementById('reconnect-status');
@@ -595,7 +619,6 @@
                     setTimeout(tryReconnect, 2000);
                 } else {
                     statusEl.innerText = `✗ RECONNECT FAILED AFTER ${MAX_ATTEMPTS} ATTEMPTS`;
-                    // Cleanup only after all attempts exhausted
                     if (bluetoothDevice) {
                         try {
                             bluetoothDevice.removeEventListener('gattserverdisconnected', onDisconnected);

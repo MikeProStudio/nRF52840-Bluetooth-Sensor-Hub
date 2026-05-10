@@ -24,6 +24,7 @@
 #include <stdio.h>
 #include <zephyr/drivers/display.h>
 #include "font8x8.h"
+#include "qrcodegen.h"
 
 /* --- Hardware Definitions --- */
 #define LED0_NODE DT_ALIAS(led0)
@@ -127,11 +128,25 @@ static void start_advertising(void);
 
 /* OLED + BT state */
 static bool bt_connected_flag;
-static uint8_t oled_phase; /* 0 = welcome, 1 = PIN+Status, 2+ = connected views */
+static uint8_t oled_phase;
 static struct k_work_delayable oled_work;
-static uint8_t oled_sub_phase;  /* 0=IMU, 1=Mic (in connected state) */
+static uint8_t oled_sub_phase;
 static uint64_t imu_view_start;
 static uint64_t mic_view_start;
+
+/* Phase definitions */
+#define PHASE_WELCOME   0
+#define PHASE_BEACON    1
+#define PHASE_QR        2
+#define PHASE_CONNECTED 3
+
+/* QR Code */
+#define QR_VERSION 5
+#define QR_BUF_LEN qrcodegen_BUFFER_LEN_FOR_VERSION(QR_VERSION)
+static uint8_t qr_temp_buf[QR_BUF_LEN];
+static uint8_t qr_code_buf[QR_BUF_LEN];
+static bool qr_code_ready;
+static uint64_t qr_view_start;
 
 /* --- Power Management (Asynchron) --- */
 static struct k_work_delayable batt_work;
@@ -424,7 +439,7 @@ static void connected(struct bt_conn *conn, uint8_t err)
 	} else {
 		printk("Connected.\n");
 		bt_connected_flag = true;
-		oled_phase = 2;
+		oled_phase = PHASE_CONNECTED;
 		oled_sub_phase = 0;
 		imu_view_start = k_uptime_get();
 		k_work_reschedule_for_queue(&oled_work_q, &oled_work, K_NO_WAIT);
@@ -435,7 +450,7 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
 {
 	printk("Disconnected (reason 0x%02x)\n", reason);
 	bt_connected_flag = false;
-	oled_phase = 1;
+	oled_phase = PHASE_BEACON;
 	oled_sub_phase = 0;
 	k_work_reschedule_for_queue(&oled_work_q, &oled_work, K_NO_WAIT);
 	start_advertising();
@@ -818,6 +833,48 @@ static int oled_init(void)
 	return 0;
 }
 
+/* --- QR Code --- */
+static void generate_qr_code(void)
+{
+	char url[96];
+	snprintf(url, sizeof(url), "https://mikeprostudio.github.io/nRF52840-Bluetooth-Sensor-Hub/");
+	qr_code_ready = qrcodegen_encodeText(url, qr_temp_buf, qr_code_buf,
+	                                      qrcodegen_Ecc_LOW, 1, QR_VERSION, qrcodegen_Mask_AUTO, true);
+}
+
+static void oled_draw_qr_code(void)
+{
+	char buf[24];
+
+	oled_clear();
+
+	if (qr_code_ready) {
+		int size = qrcodegen_getSize(qr_code_buf);
+		int module_px = 2;
+		int qr_pixels = size * module_px;
+		int qr_x = 2, qr_y = (OLED_H - qr_pixels) / 2;
+		for (int my = 0; my < size; my++) {
+			for (int mx = 0; mx < size; mx++) {
+				if (qrcodegen_getModule(qr_code_buf, mx, my)) {
+					for (int dy = 0; dy < module_px; dy++) {
+						for (int dx = 0; dx < module_px; dx++) {
+							oled_set_pixel(qr_x + mx * module_px + dx, qr_y + my * module_px + dy, 1);
+						}
+					}
+				}
+			}
+		}
+	}
+
+	int pin_x = (qr_code_ready && qrcodegen_getSize(qr_code_buf) * 2 + 2 < OLED_W)
+	            ? qrcodegen_getSize(qr_code_buf) * 2 + 8 : OLED_W - 48;
+	oled_puts(pin_x, (OLED_H - 16) / 2, "PIN:");
+	snprintf(buf, sizeof(buf), "%06u", generated_passkey);
+	oled_puts(pin_x, (OLED_H - 16) / 2 + 12, buf);
+
+	oled_flush();
+}
+
 static void oled_update_display(void)
 {
 	char buf[24];
@@ -950,11 +1007,13 @@ static void oled_update_connected(void)
 
 static void oled_work_handler(struct k_work *work)
 {
-	if (oled_phase == 0) {
+	if (oled_phase == PHASE_WELCOME) {
 		oled_clear();
 		oled_puts(16, 24, "Welcome!");
 		oled_flush();
-		oled_phase = 1;
+		generate_qr_code();
+		oled_phase = PHASE_QR;
+		qr_view_start = k_uptime_get();
 		oled_sub_phase = 0;
 		k_work_reschedule_for_queue(&oled_work_q, &oled_work, K_SECONDS(2));
 	} else if (bt_connected_flag) {
@@ -977,10 +1036,20 @@ static void oled_work_handler(struct k_work *work)
 				k_work_reschedule_for_queue(&oled_work_q, &oled_work, K_MSEC(150));
 			}
 		}
+	} else if (oled_phase == PHASE_QR) {
+		oled_draw_qr_code();
+		if (k_uptime_get() - qr_view_start < 10000) {
+			k_work_reschedule_for_queue(&oled_work_q, &oled_work, K_MSEC(500));
+		} else {
+			oled_phase = PHASE_BEACON;
+			k_work_reschedule_for_queue(&oled_work_q, &oled_work, K_NO_WAIT);
+		}
 	} else {
 		oled_update_display();
+		oled_phase = PHASE_QR;
 		oled_sub_phase = 0;
-		k_work_reschedule_for_queue(&oled_work_q, &oled_work, K_SECONDS(3));
+		qr_view_start = k_uptime_get();
+		k_work_reschedule_for_queue(&oled_work_q, &oled_work, K_SECONDS(2));
 	}
 }
 
