@@ -220,6 +220,7 @@
         <div style="display: flex; flex-direction: column; align-items: center; gap: 10px;">
             <button id="connect-btn">Initiate Tactical Uplink</button>
             <button id="reset-btn" class="btn-danger" style="display: none;">DANGER: RESET TO BOOTLOADER</button>
+            <div id="reconnect-status" style="font-size: 0.7rem; color: var(--accent); min-height: 1.2em;"></div>
         </div>
     </div>
 
@@ -563,18 +564,212 @@
         btn.classList.remove('disconnect');
         document.getElementById('reset-btn').style.display = 'none';
         
-        // SENIOR-DEV: Full State Reset & Memory Cleanup
         stopRenderLoop();
-        if (bluetoothDevice) {
+        
+        // Auto-Reconnect: bis zu 3 Versuche mit Counter
+        const MAX_ATTEMPTS = 3;
+        let attempt = 0;
+        const statusEl = document.getElementById('reconnect-status');
+        
+        async function tryReconnect() {
+            attempt++;
+            statusEl.innerText = `🔄 RECONNECT ATTEMPT ${attempt}/${MAX_ATTEMPTS}`;
+            
             try {
-                bluetoothDevice.removeEventListener('gattserverdisconnected', onDisconnected);
-            } catch(e) {}
+                const server = await bluetoothDevice.gatt.connect();
+                bluetoothServer = server;
+                const service = await bluetoothServer.getPrimaryService(SERVICE_UUID);
+                window.currentBLEService = service;
+                await startServicesAndRender(service);
+                console.log(`Senior-UI: Auto-reconnect successful (attempt ${attempt})`);
+                statusEl.innerText = '';
+                btn.innerText = 'Disconnect Tactical Uplink';
+                btn.classList.add('disconnect');
+                document.getElementById('status-text').innerText = 'UPLINK ACTIVE';
+                document.getElementById('tactical-header').classList.add('connected');
+                document.getElementById('reset-btn').style.display = 'block';
+                return;
+            } catch(e) {
+                console.log(`Senior-UI: Reconnect attempt ${attempt} failed:`, e);
+                if (attempt < MAX_ATTEMPTS) {
+                    setTimeout(tryReconnect, 2000);
+                } else {
+                    statusEl.innerText = `✗ RECONNECT FAILED AFTER ${MAX_ATTEMPTS} ATTEMPTS`;
+                    // Cleanup only after all attempts exhausted
+                    if (bluetoothDevice) {
+                        try {
+                            bluetoothDevice.removeEventListener('gattserverdisconnected', onDisconnected);
+                        } catch(e) {}
+                    }
+                    bluetoothDevice = null;
+                    bluetoothServer = null;
+                    window.currentBLEService = null;
+                }
+            }
         }
         
-        // WICHTIG: Bluetooth-Objekte komplett zerstören für GC
-        bluetoothDevice = null;
-        bluetoothServer = null;
-        window.currentBLEService = null;
+        if (bluetoothDevice) {
+            setTimeout(tryReconnect, 1000);
+        }
+    }
+
+    async function startServicesAndRender(service) {
+        const setupNotify = async (uuid, callback, skipRead = false) => {
+            try {
+                console.log(`Senior-UI: Configuring ${uuid}...`);
+                const c = await service.getCharacteristic(uuid);
+                await c.startNotifications();
+                c.addEventListener('characteristicvaluechanged', (e) => callback(e.target.value));
+                if (!skipRead) {
+                    await new Promise(r => setTimeout(r, 200));
+                    const initial = await c.readValue();
+                    callback(initial);
+                }
+                return true;
+            } catch (e) {
+                console.error("Setup failed", uuid, e);
+                return false;
+            }
+        };
+
+        const secureSetupNotify = async (uuid, callback, skipRead = false) => {
+            let success = false;
+            let retries = 15;
+            while (!success && retries > 0) {
+                if (!bluetoothDevice || !bluetoothDevice.gatt.connected) {
+                    console.log("Senior-UI: GATT link dead during setup, attempting full recovery...");
+                    try {
+                        bluetoothServer = await bluetoothDevice.gatt.connect();
+                        await new Promise(r => setTimeout(r, 1000));
+                    } catch (e) {
+                        console.log("Senior-UI: Recovery failed, retrying...");
+                        await new Promise(r => setTimeout(r, 2000));
+                        retries--;
+                        continue;
+                    }
+                }
+                try {
+                    const activeService = await bluetoothServer.getPrimaryService(SERVICE_UUID);
+                    const c = await activeService.getCharacteristic(uuid);
+                    await c.startNotifications();
+                    c.addEventListener('characteristicvaluechanged', (e) => callback(e.target.value));
+                    if (!skipRead) {
+                        await new Promise(r => setTimeout(r, 300));
+                        const initial = await c.readValue();
+                        callback(initial);
+                    }
+                    success = true;
+                    console.log(`Senior-UI: Successfully configured ${uuid}`);
+                } catch (e) {
+                    console.log(`Senior-UI: Characteristic setup failed (${uuid}), retrying...`, e);
+                    await new Promise(r => setTimeout(r, 2000));
+                    retries--;
+                }
+            }
+            return success;
+        };
+
+        console.log("Senior-UI: Waiting for encryption/bonding handshake...");
+        await new Promise(r => setTimeout(r, 3500));
+
+        if (!bluetoothDevice.gatt.connected) {
+            console.log("Senior-UI: Connection dropped by OS after bonding, reconnecting...");
+            bluetoothServer = await bluetoothDevice.gatt.connect();
+            await new Promise(r => setTimeout(r, 1000));
+        }
+
+        await secureSetupNotify(TX_POWER_CHAR, (v) => {
+            const txVal = v.getInt8(0);
+            currentTxPower = txVal;
+            document.getElementById('rssi-val').innerText = txVal;
+            const mw = Math.pow(10, txVal / 10).toFixed(2);
+            document.getElementById('tx-mw').innerText = mw;
+            const pcnt = Math.round(((txVal + 40) / 48) * 100);
+            document.getElementById('tx-pcnt').innerText = pcnt;
+            const statusEl = document.getElementById('tx-status');
+            if (txVal >= 4) { statusEl.innerText = 'HIGH POWER'; statusEl.style.color = 'var(--primary)'; }
+            else if (txVal >= -4) { statusEl.innerText = 'BALANCED'; statusEl.style.color = 'var(--mid)'; }
+            else { statusEl.innerText = 'POWER SAVE'; statusEl.style.color = 'var(--accent)'; }
+        });
+
+        await secureSetupNotify(BATTERY_CHAR, (v) => {
+            if (v.byteLength < 4) return;
+            const volt = v.getUint16(0, true) / 1000.0;
+            const soc = v.getUint8(2);
+            const status = v.getUint8(3);
+            const voltEl = document.getElementById('batt-volt');
+            const socEl = document.getElementById('batt-soc');
+            voltEl.style.transition = 'color 0.5s ease';
+            voltEl.innerText = volt.toFixed(2);
+            socEl.innerText = soc + "%";
+            const badge = document.getElementById('batt-usb');
+            if (status === 1) { badge.style.display='inline-block'; badge.innerText='CHARGING'; badge.style.background='var(--accent)'; }
+            else if (status === 2) { badge.style.display='inline-block'; badge.innerText='USB POWER'; badge.style.background='var(--green)'; }
+            else { badge.style.display='inline-block'; badge.innerText='BATTERY'; badge.style.background='var(--low)'; }
+            if (soc > 50) voltEl.style.color = 'var(--green)';
+            else if (soc > 20) voltEl.style.color = 'var(--high)';
+            else voltEl.style.color = 'var(--accent)';
+        });
+
+        await secureSetupNotify(ACCEL_CHAR, (v) => {
+            if (v.byteLength < 12) return;
+            const x = v.getInt32(0, true)/1000.0, y = v.getInt32(4, true)/1000.0, z = v.getInt32(8, true)/1000.0;
+            document.getElementById('ax').innerText = x.toFixed(2);
+            document.getElementById('ay').innerText = y.toFixed(2);
+            document.getElementById('az').innerText = z.toFixed(2);
+            [x,y,z].forEach((val, i) => { charts.accel.data.datasets[i].data.push(val); charts.accel.data.datasets[i].data.shift(); });
+            charts.accel.update('none');
+        }, true);
+
+        await secureSetupNotify(GYRO_CHAR, (v) => {
+            if (v.byteLength < 12) return;
+            const x = (v.getInt32(0, true)/1000.0)*57.3, y = (v.getInt32(4, true)/1000.0)*57.3, z = (v.getInt32(8, true)/1000.0)*57.3;
+            document.getElementById('gx').innerText = x.toFixed(1);
+            document.getElementById('gy').innerText = y.toFixed(1);
+            document.getElementById('gz').innerText = z.toFixed(1);
+            [x,y,z].forEach((val, i) => { charts.gyro.data.datasets[i].data.push(val); charts.gyro.data.datasets[i].data.shift(); });
+            charts.gyro.update('none');
+        }, true);
+
+        await secureSetupNotify(AUDIO_CHAR, (v) => {
+            if (v.byteLength < 8) return;
+            const rms = v.getUint32(0, true) / 1000.0;
+            const zcr = v.getUint32(4, true);
+            let dbfs = 20 * Math.log10(rms || 0.0001);
+            let dbspl = dbfs + 94 + 41;
+            if (dbspl < 30) dbspl = 30;
+            const freq_est = (zcr / 1024) * 8000;
+            const fftData = new Float32Array(512);
+            for (let i = 0; i < 512; i++) {
+                const binFreq = (i * 16000 / 1024);
+                let binValue = 30 + Math.random() * 5;
+                if (dbspl > 40) {
+                    const intensity = (dbspl - 30);
+                    const dist = Math.abs(binFreq - freq_est);
+                    const width = 200 + (intensity * 10);
+                    binValue += Math.exp(-Math.pow(dist, 2) / (2 * Math.pow(width, 2))) * intensity;
+                    const distH2 = Math.abs(binFreq - (freq_est * 2));
+                    binValue += Math.exp(-Math.pow(distH2, 2) / (2 * Math.pow(width/2, 2))) * (intensity * 0.4);
+                    binValue += Math.exp(-Math.pow(i - 10, 2) / 100) * (intensity * 0.3);
+                }
+                binValue += getAWeighting(binFreq || 1);
+                psd_ema[i] = (ema_alpha * binValue) + ((1 - ema_alpha) * psd_ema[i]);
+                fftData[i] = Math.max(30, Math.min(120, psd_ema[i]));
+            }
+            if (Math.random() < 0.05) console.log(`Audio -> ZCR: ${zcr}, Est. Freq: ${Math.round(freq_est)}Hz, SPL: ${Math.round(dbspl)}dB`);
+            lastPsdData = new Float32Array(fftData);
+        }, true);
+
+        document.getElementById('reset-btn').onclick = async () => {
+            if (confirm("System will enter UF2 Bootloader Mode. Current session will end. Proceed?")) {
+                try {
+                    const char = await service.getCharacteristic(RESET_CHAR);
+                    await char.writeValue(new Uint8Array([1]));
+                } catch (e) { console.error("Reset failed", e); }
+            }
+        };
+
+        startRenderLoop();
     }
 
     document.getElementById('connect-btn').addEventListener('click', async () => {
@@ -615,215 +810,14 @@
             btn.classList.add('disconnect');
             document.getElementById('reset-btn').style.display = 'block';
 
-            // SENIOR-DEV: Sequential Setup to allow UI time for PIN pairing
-            const setupNotify = async (uuid, callback, skipRead = false) => {
-                try {
-                    console.log(`Senior-UI: Configuring ${uuid}...`);
-                    const c = await service.getCharacteristic(uuid);
-                    await c.startNotifications();
-                    c.addEventListener('characteristicvaluechanged', (e) => callback(e.target.value));
-                    if (!skipRead) {
-                        // Wir warten kurz, falls der Browser noch mit der Authentifizierung beschäftigt ist
-                        await new Promise(r => setTimeout(r, 200));
-                        const initial = await c.readValue();
-                        callback(initial);
-                    }
-                    return true;
-                } catch (e) {
-                    console.error("Setup failed", uuid, e);
-                    return false;
-                }
-            };
+            await startServicesAndRender(service);
 
-            // SENIOR-DEV: Authentifizierungs-Retry Logic
-            const secureSetupNotify = async (uuid, callback, skipRead = false) => {
-                let success = false;
-                let retries = 15;
-                while (!success && retries > 0) {
-                    if (!bluetoothDevice || !bluetoothDevice.gatt.connected) {
-                        console.log("Senior-UI: GATT link dead during setup, attempting full recovery...");
-                        try {
-                            bluetoothServer = await bluetoothDevice.gatt.connect();
-                            await new Promise(r => setTimeout(r, 1000)); // Cool down
-                        } catch (e) {
-                            console.log("Senior-UI: Recovery failed, retrying...");
-                            await new Promise(r => setTimeout(r, 2000));
-                            retries--;
-                            continue;
-                        }
-                    }
-                    
-                    try {
-                        const activeService = await bluetoothServer.getPrimaryService(SERVICE_UUID);
-                        const c = await activeService.getCharacteristic(uuid);
-                        await c.startNotifications();
-                        c.addEventListener('characteristicvaluechanged', (e) => callback(e.target.value));
-                        if (!skipRead) {
-                            await new Promise(r => setTimeout(r, 300));
-                            const initial = await c.readValue();
-                            callback(initial);
-                        }
-                        success = true;
-                        console.log(`Senior-UI: Successfully configured ${uuid}`);
-                    } catch (e) {
-                        console.log(`Senior-UI: Characteristic setup failed (${uuid}), retrying...`, e);
-                        await new Promise(r => setTimeout(r, 2000));
-                        retries--;
-                    }
-                }
-                return success;
-            };
-
-            // Wartezeit für den PIN Dialog / Bonding Handshake
-            console.log("Senior-UI: Waiting for encryption/bonding handshake...");
-            await new Promise(r => setTimeout(r, 3500)); 
-
-            // Final link check before starting characteristic discovery
-            if (!bluetoothDevice.gatt.connected) {
-                console.log("Senior-UI: Connection dropped by OS after bonding, reconnecting...");
-                bluetoothServer = await bluetoothDevice.gatt.connect();
-                await new Promise(r => setTimeout(r, 1000));
-            }
-
-            // Sequentielles Setup mit Auth-Retries
-            await secureSetupNotify(TX_POWER_CHAR, (v) => {
-                const txVal = v.getInt8(0);
-                currentTxPower = txVal;
-                document.getElementById('rssi-val').innerText = txVal;
-                
-                // Umrechnung dBm zu mW: P(mW) = 10^(P(dBm)/10)
-                const mw = Math.pow(10, txVal / 10).toFixed(2);
-                document.getElementById('tx-mw').innerText = mw;
-                
-                // Prozent von Max (8dBm ist Max beim nRF52840)
-                // Wir mappen -40dBm bis 8dBm auf 0-100% (logarithmisch ist schwierig für Laien, wir machen es linear zum Verständnis)
-                const pcnt = Math.round(((txVal + 40) / 48) * 100);
-                document.getElementById('tx-pcnt').innerText = pcnt;
-
-                const statusEl = document.getElementById('tx-status');
-                if (txVal >= 4) { statusEl.innerText = 'HIGH POWER'; statusEl.style.color = 'var(--primary)'; }
-                else if (txVal >= -4) { statusEl.innerText = 'BALANCED'; statusEl.style.color = 'var(--mid)'; }
-                else { statusEl.innerText = 'POWER SAVE'; statusEl.style.color = 'var(--accent)'; }
-            });
-
-            // Battery
-            await secureSetupNotify(BATTERY_CHAR, (v) => {
-                if (v.byteLength < 4) return;
-                const volt = v.getUint16(0, true) / 1000.0;
-                const soc = v.getUint8(2);
-                const status = v.getUint8(3); // 0=Batt, 1=Charging, 2=USB Full
-                
-                const voltEl = document.getElementById('batt-volt');
-                const socEl = document.getElementById('batt-soc');
-                
-                // Sanfter Übergang für den Text
-                voltEl.style.transition = 'color 0.5s ease';
-                voltEl.innerText = volt.toFixed(2);
-                socEl.innerText = soc + "%";
-                
-                const badge = document.getElementById('batt-usb');
-                if (status === 1) { badge.style.display='inline-block'; badge.innerText='CHARGING'; badge.style.background='var(--accent)'; }
-                else if (status === 2) { badge.style.display='inline-block'; badge.innerText='USB POWER'; badge.style.background='var(--green)'; }
-                else { badge.style.display='inline-block'; badge.innerText='BATTERY'; badge.style.background='var(--low)'; }
-
-                if (soc > 50) voltEl.style.color = 'var(--green)';
-                else if (soc > 20) voltEl.style.color = 'var(--high)';
-                else voltEl.style.color = 'var(--accent)';
-            });
-
-            // Sensors (Notify only, skip direct read to avoid NotSupported errors)
-            await secureSetupNotify(ACCEL_CHAR, (v) => {
-                if (v.byteLength < 12) return;
-                const x = v.getInt32(0, true)/1000.0, y = v.getInt32(4, true)/1000.0, z = v.getInt32(8, true)/1000.0;
-                document.getElementById('ax').innerText = x.toFixed(2);
-                document.getElementById('ay').innerText = y.toFixed(2);
-                document.getElementById('az').innerText = z.toFixed(2);
-                [x,y,z].forEach((val, i) => { charts.accel.data.datasets[i].data.push(val); charts.accel.data.datasets[i].data.shift(); });
-                charts.accel.update('none');
-            }, true);
-
-            await secureSetupNotify(GYRO_CHAR, (v) => {
-                if (v.byteLength < 12) return;
-                const x = (v.getInt32(0, true)/1000.0)*57.3, y = (v.getInt32(4, true)/1000.0)*57.3, z = (v.getInt32(8, true)/1000.0)*57.3;
-                document.getElementById('gx').innerText = x.toFixed(1);
-                document.getElementById('gy').innerText = y.toFixed(1);
-                document.getElementById('gz').innerText = z.toFixed(1);
-                [x,y,z].forEach((val, i) => { charts.gyro.data.datasets[i].data.push(val); charts.gyro.data.datasets[i].data.shift(); });
-                charts.gyro.update('none');
-            }, true);
-
-            await secureSetupNotify(AUDIO_CHAR, (v) => {
-                if (v.byteLength < 8) return;
-                const rms = v.getUint32(0, true) / 1000.0;
-                const zcr = v.getUint32(4, true);
-
-                let dbfs = 20 * Math.log10(rms || 0.0001);
-                let dbspl = dbfs + 94 + 41;
-                if (dbspl < 30) dbspl = 30;
-
-                // Estimate fundamental frequency based on ZCR
-                // ZCR max theoretical in a 1024 sample block at 16kHz is 1024 (8000Hz)
-                // freq_est = (ZCR / samples) * (sample_rate / 2)
-                const freq_est = (zcr / 1024) * 8000;
-
-                const fftData = new Float32Array(512);
-                for (let i = 0; i < 512; i++) {
-                    const binFreq = (i * 16000 / 1024);
-                    
-                    // Base noise floor
-                    let binValue = 30 + Math.random() * 5; 
-                    
-                    // If we have sound, create a peak around the estimated frequency
-                    if (dbspl > 40) {
-                        const intensity = (dbspl - 30);
-                        
-                        // Distance from current bin to estimated frequency
-                        const dist = Math.abs(binFreq - freq_est);
-                        
-                        // Create a bell curve (Gaussian) around the dominant frequency
-                        // The width of the bell curve depends on the intensity
-                        const width = 200 + (intensity * 10);
-                        binValue += Math.exp(-Math.pow(dist, 2) / (2 * Math.pow(width, 2))) * intensity;
-                        
-                        // Add some harmonics for realism
-                        const distH2 = Math.abs(binFreq - (freq_est * 2));
-                        binValue += Math.exp(-Math.pow(distH2, 2) / (2 * Math.pow(width/2, 2))) * (intensity * 0.4);
-                        
-                        // Low frequency rumble base
-                        binValue += Math.exp(-Math.pow(i - 10, 2) / 100) * (intensity * 0.3);
-                    }
-                    
-                    // Apply A-Weighting curve
-                    binValue += getAWeighting(binFreq || 1);
-                    
-                    // EMA Smoothing
-                    psd_ema[i] = (ema_alpha * binValue) + ((1 - ema_alpha) * psd_ema[i]);
-                    fftData[i] = Math.max(30, Math.min(120, psd_ema[i]));
-                }
-                
-                // Debug log occasionally
-                if (Math.random() < 0.05) console.log(`Audio -> ZCR: ${zcr}, Est. Freq: ${Math.round(freq_est)}Hz, SPL: ${Math.round(dbspl)}dB`);
-
-                lastPsdData = new Float32Array(fftData);
-            }, true);
-
-            // SENIOR-DEV: Reset Functionality
-            document.getElementById('reset-btn').onclick = async () => {
-                if (confirm("System will enter UF2 Bootloader Mode. Current session will end. Proceed?")) {
-                    try {
-                        const char = await service.getCharacteristic(RESET_CHAR);
-                        await char.writeValue(new Uint8Array([1]));
-                    } catch (e) { console.error("Reset failed", e); }
-                }
-            };
-
-            startRenderLoop();
-
-            // --- Senior Dev: Auto-Hide PIN after successful connection ---
+            // --- Auto-Hide PIN after successful connection ---
             removePinDisplay();
 
         } catch (err) { console.error("BLE Error:", err); }
     });
+
 </script>
 </body>
 </html>

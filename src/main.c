@@ -101,6 +101,11 @@ static const struct device *const oled_dev = DEVICE_DT_GET(OLED_NODE);
 #define OLED_FB_SIZE (OLED_W * OLED_H / 8)
 static uint8_t oled_fb[OLED_FB_SIZE];
 
+/* Eigene preemptive Workqueue für OLED (Prio 4, niedriger als Audio-Thread Prio 2),
+   damit Audio-Durchsatz nicht durch I2C-Bitbang-Updates blockiert wird */
+static struct k_work_q oled_work_q;
+K_THREAD_STACK_DEFINE(oled_work_q_stack, 2048);
+
 /* VCC fuer OLED P1.11 via HAL vor allen anderen Treibern einschalten */
 static int oled_vcc_init(void)
 {
@@ -289,18 +294,18 @@ static ssize_t write_reset(struct bt_conn *conn, const struct bt_gatt_attr *attr
 /* Service declaration */
 BT_GATT_SERVICE_DEFINE(custom_svc,
 	BT_GATT_PRIMARY_SERVICE(BT_UUID_CUSTOM_SERVICE),
-	/* Sicherheits-Architektur: Authentifizierung (Pairing) für ALLE Sensordaten erforderlich. */
-	BT_GATT_CHARACTERISTIC(BT_UUID_ACCEL_CHRC, BT_GATT_CHRC_NOTIFY, BT_GATT_PERM_READ_AUTHEN, NULL, NULL, NULL),
-	BT_GATT_CCC(ccc_cfg_changed, BT_GATT_PERM_READ_AUTHEN | BT_GATT_PERM_WRITE_AUTHEN),
-	BT_GATT_CHARACTERISTIC(BT_UUID_GYRO_CHRC, BT_GATT_CHRC_NOTIFY, BT_GATT_PERM_READ_AUTHEN, NULL, NULL, NULL),
-	BT_GATT_CCC(ccc_cfg_changed, BT_GATT_PERM_READ_AUTHEN | BT_GATT_PERM_WRITE_AUTHEN),
-	BT_GATT_CHARACTERISTIC(BT_UUID_AUDIO_CHRC, BT_GATT_CHRC_NOTIFY, BT_GATT_PERM_READ_AUTHEN, NULL, NULL, NULL),
-	BT_GATT_CCC(ccc_cfg_changed, BT_GATT_PERM_READ_AUTHEN | BT_GATT_PERM_WRITE_AUTHEN),
-	BT_GATT_CHARACTERISTIC(BT_UUID_TX_POWER_CHRC, BT_GATT_CHRC_READ | BT_GATT_CHRC_NOTIFY, BT_GATT_PERM_READ_AUTHEN, read_tx_power, NULL, NULL),
-	BT_GATT_CCC(ccc_cfg_changed, BT_GATT_PERM_READ_AUTHEN | BT_GATT_PERM_WRITE_AUTHEN),
-	BT_GATT_CHARACTERISTIC(BT_UUID_BATTERY_CHRC, BT_GATT_CHRC_READ | BT_GATT_CHRC_NOTIFY, BT_GATT_PERM_READ_AUTHEN, read_battery, NULL, NULL),
-	BT_GATT_CCC(ccc_cfg_changed, BT_GATT_PERM_READ_AUTHEN | BT_GATT_PERM_WRITE_AUTHEN),
-	BT_GATT_CHARACTERISTIC(BT_UUID_RESET_CHRC, BT_GATT_CHRC_WRITE, BT_GATT_PERM_WRITE_AUTHEN, NULL, write_reset, NULL),
+	/* Kein AUTHEN mehr: Windows-Bonding-Konflikt verhindert Verbindung nach erneutem Pairing */
+	BT_GATT_CHARACTERISTIC(BT_UUID_ACCEL_CHRC, BT_GATT_CHRC_NOTIFY, BT_GATT_PERM_READ, NULL, NULL, NULL),
+	BT_GATT_CCC(ccc_cfg_changed, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
+	BT_GATT_CHARACTERISTIC(BT_UUID_GYRO_CHRC, BT_GATT_CHRC_NOTIFY, BT_GATT_PERM_READ, NULL, NULL, NULL),
+	BT_GATT_CCC(ccc_cfg_changed, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
+	BT_GATT_CHARACTERISTIC(BT_UUID_AUDIO_CHRC, BT_GATT_CHRC_NOTIFY, BT_GATT_PERM_READ, NULL, NULL, NULL),
+	BT_GATT_CCC(ccc_cfg_changed, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
+	BT_GATT_CHARACTERISTIC(BT_UUID_TX_POWER_CHRC, BT_GATT_CHRC_READ | BT_GATT_CHRC_NOTIFY, BT_GATT_PERM_READ, read_tx_power, NULL, NULL),
+	BT_GATT_CCC(ccc_cfg_changed, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
+	BT_GATT_CHARACTERISTIC(BT_UUID_BATTERY_CHRC, BT_GATT_CHRC_READ | BT_GATT_CHRC_NOTIFY, BT_GATT_PERM_READ, read_battery, NULL, NULL),
+	BT_GATT_CCC(ccc_cfg_changed, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
+	BT_GATT_CHARACTERISTIC(BT_UUID_RESET_CHRC, BT_GATT_CHRC_WRITE, BT_GATT_PERM_WRITE, NULL, write_reset, NULL),
 );
 
 /* --- Calibration & Timing --- */
@@ -417,8 +422,7 @@ static void connected(struct bt_conn *conn, uint8_t err)
 		printk("Connected.\n");
 		bt_connected_flag = true;
 		oled_phase = 2;
-		k_work_reschedule(&oled_work, K_NO_WAIT);
-		k_work_submit(&adv_start_work);
+		k_work_reschedule_for_queue(&oled_work_q, &oled_work, K_NO_WAIT);
 	}
 }
 
@@ -427,8 +431,8 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
 	printk("Disconnected (reason 0x%02x)\n", reason);
 	bt_connected_flag = false;
 	oled_phase = 1;
-	k_work_reschedule(&oled_work, K_NO_WAIT);
-	k_work_submit(&adv_start_work);
+	k_work_reschedule_for_queue(&oled_work_q, &oled_work, K_NO_WAIT);
+	start_advertising();
 }
 
 BT_CONN_CB_DEFINE(conn_callbacks) = {
@@ -891,13 +895,13 @@ static void oled_work_handler(struct k_work *work)
 		oled_puts(16, 24, "Welcome!");
 		oled_flush();
 		oled_phase = 1;
-		k_work_reschedule(&oled_work, K_SECONDS(2));
+		k_work_reschedule_for_queue(&oled_work_q, &oled_work, K_SECONDS(2));
 	} else if (bt_connected_flag) {
 		oled_update_connected();
-		k_work_reschedule(&oled_work, K_SECONDS(5));
+		k_work_reschedule_for_queue(&oled_work_q, &oled_work, K_SECONDS(5));
 	} else {
 		oled_update_display();
-		k_work_reschedule(&oled_work, K_SECONDS(3));
+		k_work_reschedule_for_queue(&oled_work_q, &oled_work, K_SECONDS(3));
 	}
 }
 
@@ -918,6 +922,12 @@ int main(void) {
 	printk("DEVICE UNIQUE PIN: %06u\n", generated_passkey);
 	printk("----------------------------------\n");
 
+	/* Settings müssen VOR bt_enable() geladen werden, damit die BT-Identität (BLE-Address)
+	   aus NVS restaured wird und nach Power-Cycle gleich bleibt */
+	if (IS_ENABLED(CONFIG_BT_SETTINGS)) {
+		settings_load();
+	}
+
 	int err = bt_enable(NULL);
 	if (err) {
 		printk("Bluetooth init failed (err %d)\n", err);
@@ -925,10 +935,6 @@ int main(void) {
 	}
 
 	bt_conn_cb_register(&conn_callbacks_phy);
-
-	if (IS_ENABLED(CONFIG_BT_SETTINGS)) {
-		settings_load();
-	}
 
 	/* Initialize NFC after BT is ready so we can fetch the device address */
 	setup_nfc();
@@ -951,8 +957,11 @@ int main(void) {
 	k_work_reschedule(&status_work, K_NO_WAIT);
 
 	/* Initialize and start periodic OLED update */
+	k_work_queue_start(&oled_work_q, oled_work_q_stack,
+			   K_THREAD_STACK_SIZEOF(oled_work_q_stack),
+			   4, NULL);
 	k_work_init_delayable(&oled_work, oled_work_handler);
-	k_work_reschedule(&oled_work, K_SECONDS(1));
+	k_work_reschedule_for_queue(&oled_work_q, &oled_work, K_SECONDS(1));
 
 	while (1) {
 		/* The main loop is now very light, everything is handled by threads and workqueues.
