@@ -516,7 +516,7 @@ static int32_t my_sensor_value_to_milli(const struct sensor_value *val) { return
 #define AUDIO_SAMPLE_RATE 16000
 #define AUDIO_SAMPLES_PER_BLOCK 512
 #define AUDIO_BLOCK_SIZE (AUDIO_SAMPLES_PER_BLOCK * sizeof(int16_t))
-K_MEM_SLAB_DEFINE(audio_mem_slab, AUDIO_BLOCK_SIZE, 8, 4);
+K_MEM_SLAB_DEFINE(audio_mem_slab, AUDIO_BLOCK_SIZE, 24, 4);
 
 static struct k_thread audio_thread_data;
 static struct k_thread sensor_thread_data;
@@ -534,9 +534,14 @@ static void audio_thread(void *p1, void *p2, void *p3)
 		gpio_pin_configure(gpio1_dev, SENSE_PWR_PIN, GPIO_OUTPUT_HIGH);
 		gpio_pin_set(gpio1_dev, SENSE_PWR_PIN, 1);
 		k_msleep(100);
+	} else {
+		printk("AUDIO: gpio1_dev not ready\n");
 	}
 
-	if (!device_is_ready(mic_dev)) return;
+	if (!device_is_ready(mic_dev)) {
+		printk("AUDIO: mic_dev not ready\n");
+		return;
+	}
 
 	struct pcm_stream_cfg stream_cfg = {
 		.pcm_rate = AUDIO_SAMPLE_RATE,
@@ -554,8 +559,15 @@ static void audio_thread(void *p1, void *p2, void *p3)
 	cfg.channel.req_num_chan = 1;
 	cfg.channel.req_num_streams = 1;
 
-	if (dmic_configure(mic_dev, &cfg) < 0) return;
-	if (dmic_trigger(mic_dev, DMIC_TRIGGER_START) < 0) return;
+	if (dmic_configure(mic_dev, &cfg) < 0) {
+		printk("AUDIO: dmic_configure failed\n");
+		return;
+	}
+	if (dmic_trigger(mic_dev, DMIC_TRIGGER_START) < 0) {
+		printk("AUDIO: dmic_trigger failed\n");
+		return;
+	}
+	printk("AUDIO: PDM started, waiting for samples\n");
 
 	while (1) {
 		ret = dmic_read(mic_dev, 0, &buffer, &size, SYS_FOREVER_MS);
@@ -620,15 +632,14 @@ static void audio_thread(void *p1, void *p2, void *p3)
 				}
 			}
 
-			if (k_uptime_get_32() % 1000 < 50) {
-				bt_gatt_notify(NULL, &custom_svc.attrs[IDX_AUDIO_VAL], audio_level_buf, sizeof(audio_level_buf));
-				printk("Mic RMS: %u (raw scale), Notify all clients\n", val_u32);
-			} else {
+			if (bt_connected_flag) {
 				bt_gatt_notify(NULL, &custom_svc.attrs[IDX_AUDIO_VAL], audio_level_buf, sizeof(audio_level_buf));
 			}
 			k_mem_slab_free(&audio_mem_slab, buffer);
+			if (k_uptime_get_32() % 1000 < 50) {
+				printk("Mic RMS: %u\n", val_u32);
+			}
 		}
-		k_yield();
 	}
 }
 
