@@ -127,8 +127,11 @@ static void start_advertising(void);
 
 /* OLED + BT state */
 static bool bt_connected_flag;
-static uint8_t oled_phase; /* 0 = welcome, 1 = PIN+Status, 2 = Sensor */
+static uint8_t oled_phase; /* 0 = welcome, 1 = PIN+Status, 2+ = connected views */
 static struct k_work_delayable oled_work;
+static uint8_t oled_sub_phase;  /* 0=IMU, 1=Mic (in connected state) */
+static uint64_t imu_view_start;
+static uint64_t mic_view_start;
 
 /* --- Power Management (Asynchron) --- */
 static struct k_work_delayable batt_work;
@@ -422,6 +425,8 @@ static void connected(struct bt_conn *conn, uint8_t err)
 		printk("Connected.\n");
 		bt_connected_flag = true;
 		oled_phase = 2;
+		oled_sub_phase = 0;
+		imu_view_start = k_uptime_get();
 		k_work_reschedule_for_queue(&oled_work_q, &oled_work, K_NO_WAIT);
 	}
 }
@@ -431,6 +436,7 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
 	printk("Disconnected (reason 0x%02x)\n", reason);
 	bt_connected_flag = false;
 	oled_phase = 1;
+	oled_sub_phase = 0;
 	k_work_reschedule_for_queue(&oled_work_q, &oled_work, K_NO_WAIT);
 	start_advertising();
 }
@@ -849,6 +855,60 @@ static void fmt_val(char *buf, int32_t val)
 	snprintf(buf, 10, "%s%d.%02u", neg ? "-" : " ", ip, (unsigned int)fp);
 }
 
+/* --- OLED Mic PSD Visualization --- */
+#define PSD_BINS 112
+#define CHART_X 16
+static uint8_t psd_ema[PSD_BINS];
+
+static void oled_update_mic(void)
+{
+	uint32_t rms_raw = sys_get_le32(&audio_level_buf[0]);
+	uint32_t zcr = sys_get_le32(&audio_level_buf[4]);
+	double rms = (double)rms_raw / 1000.0;
+	double freq_est = (double)zcr * 8000.0 / 1024.0;
+	if (freq_est < 300.0) freq_est = 300.0;
+
+	double dbfs = 20.0 * log10(rms + 0.0001);
+	double dbspl = dbfs + 135.0;
+	if (dbspl < 30.0) dbspl = 30.0;
+	if (dbspl > 120.0) dbspl = 120.0;
+	double max_bar = (dbspl - 30.0) / 90.0 * 47.0;
+
+	oled_clear();
+
+	for (int i = 0; i < PSD_BINS; i++) {
+		double bin_freq = (double)i * 16000.0 / (double)(PSD_BINS * 2);
+		double dist = bin_freq - freq_est;
+		double val = exp(-(dist * dist) / 40000.0) * max_bar;
+		double dist2 = bin_freq - freq_est * 2.0;
+		val += exp(-(dist2 * dist2) / 20000.0) * max_bar * 0.35;
+		val += exp(-(bin_freq * bin_freq) / 20000.0) * max_bar * 0.12;
+		if (val < 0.3) val = 0.0;
+		if (val > 47.0) val = 47.0;
+		uint8_t v = (uint8_t)val;
+
+		uint8_t ema = (uint8_t)((v > psd_ema[i]) ?
+			(v * 0.5f + psd_ema[i] * 0.5f) :
+			(psd_ema[i] * 0.90f));
+		if (ema > 47) ema = 47;
+		psd_ema[i] = ema;
+
+		for (int y = 0; y < ema && y < 48; y++) {
+			oled_set_pixel(CHART_X + i, 47 - y, 1);
+		}
+	}
+
+	oled_puts_w(0, 0, "120", 4);
+	oled_puts_w(0, 20, "75", 4);
+	oled_puts_w(0, 39, "30", 4);
+	oled_puts_w(CHART_X, 48, "0  2  4  6  8kHz", 6);
+	char rms_str[16];
+	snprintf(rms_str, sizeof(rms_str), "RMS %u", rms_raw);
+	oled_puts_w(0, 56, rms_str, 6);
+
+	oled_flush();
+}
+
 static void oled_update_connected(void)
 {
 	char buf[24], xs[10], ys[10], zs[10];
@@ -895,12 +955,31 @@ static void oled_work_handler(struct k_work *work)
 		oled_puts(16, 24, "Welcome!");
 		oled_flush();
 		oled_phase = 1;
+		oled_sub_phase = 0;
 		k_work_reschedule_for_queue(&oled_work_q, &oled_work, K_SECONDS(2));
 	} else if (bt_connected_flag) {
-		oled_update_connected();
-		k_work_reschedule_for_queue(&oled_work_q, &oled_work, K_SECONDS(5));
+		if (oled_sub_phase == 0) {
+			oled_update_connected();
+			if (k_uptime_get() - imu_view_start < 5000) {
+				k_work_reschedule_for_queue(&oled_work_q, &oled_work, K_MSEC(150));
+			} else {
+				mic_view_start = k_uptime_get();
+				oled_sub_phase = 1;
+				k_work_reschedule_for_queue(&oled_work_q, &oled_work, K_MSEC(150));
+			}
+		} else {
+			oled_update_mic();
+			if (k_uptime_get() - mic_view_start < 5000) {
+				k_work_reschedule_for_queue(&oled_work_q, &oled_work, K_MSEC(150));
+			} else {
+				imu_view_start = k_uptime_get();
+				oled_sub_phase = 0;
+				k_work_reschedule_for_queue(&oled_work_q, &oled_work, K_MSEC(150));
+			}
+		}
 	} else {
 		oled_update_display();
+		oled_sub_phase = 0;
 		k_work_reschedule_for_queue(&oled_work_q, &oled_work, K_SECONDS(3));
 	}
 }
