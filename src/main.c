@@ -58,6 +58,7 @@ static const struct adc_dt_spec adc_channel = ADC_DT_SPEC_GET_BY_IDX(DT_PATH(zep
 #define BT_UUID_TX_POWER_CHRC_VAL  BT_UUID_128_ENCODE(0x12345678, 0x1234, 0x5678, 0x1234, 0x56789abcdef4)
 #define BT_UUID_BATTERY_CHRC_VAL   BT_UUID_128_ENCODE(0x12345678, 0x1234, 0x5678, 0x1234, 0x56789abcdef5)
 #define BT_UUID_RESET_CHRC_VAL     BT_UUID_128_ENCODE(0x12345678, 0x1234, 0x5678, 0x1234, 0x56789abcdef6)
+#define BT_UUID_OLED_SETTINGS_CHRC_VAL BT_UUID_128_ENCODE(0x12345678, 0x1234, 0x5678, 0x1234, 0x56789abcdef7)
 
 #define BT_UUID_CUSTOM_SERVICE  BT_UUID_DECLARE_128(BT_UUID_CUSTOM_SERVICE_VAL)
 #define BT_UUID_ACCEL_CHRC      BT_UUID_DECLARE_128(BT_UUID_ACCEL_CHRC_VAL)
@@ -66,6 +67,7 @@ static const struct adc_dt_spec adc_channel = ADC_DT_SPEC_GET_BY_IDX(DT_PATH(zep
 #define BT_UUID_TX_POWER_CHRC   BT_UUID_DECLARE_128(BT_UUID_TX_POWER_CHRC_VAL)
 #define BT_UUID_BATTERY_CHRC    BT_UUID_DECLARE_128(BT_UUID_BATTERY_CHRC_VAL)
 #define BT_UUID_RESET_CHRC      BT_UUID_DECLARE_128(BT_UUID_RESET_CHRC_VAL)
+#define BT_UUID_OLED_SETTINGS_CHRC BT_UUID_DECLARE_128(BT_UUID_OLED_SETTINGS_CHRC_VAL)
 
 /* Sichere Indizes für GATT-Charakteristiken (verhindert Magic Numbers) */
 enum {
@@ -76,6 +78,7 @@ enum {
 	IDX_TX_POWER_VAL = 11,
 	IDX_BATTERY_VAL = 14,
 	IDX_RESET_VAL = 17,
+	IDX_OLED_SETTINGS_VAL = 19,
 };
 
 /* Data structures for BLE transmission */
@@ -92,6 +95,35 @@ static struct imu_data_t accel_data, gyro_data;
 static uint8_t audio_level_buf[8]; /* uint32_t RMS + uint32_t ZCR */
 static int8_t tx_power_level = 0; /* Default start value */
 static struct batt_data_t battery_status = {0};
+
+/* OLED Settings (read/write via GATT) */
+struct oled_settings {
+	uint8_t beacon_dwell_s;
+	uint8_t qr_dwell_s;
+	uint8_t imu_dwell_s;
+	uint8_t mic_dwell_s;
+	uint8_t view_override;       /* 0=auto, 1=dashboard, 2=mic */
+	uint8_t qr_enable;
+	uint8_t contrast;
+	uint8_t invert;
+	uint8_t display_sleep_min;   /* 0=never */
+	uint8_t led_enable;          /* 0=off, 1=on */
+} __packed;
+
+static struct oled_settings oled_settings = {
+	.beacon_dwell_s = 2,
+	.qr_dwell_s = 10,
+	.imu_dwell_s = 5,
+	.mic_dwell_s = 5,
+	.view_override = 0,
+	.qr_enable = 1,
+	.contrast = 128,
+	.invert = 0,
+	.display_sleep_min = 0,
+	.led_enable = 1,
+};
+
+static uint64_t oled_last_activity;
 
 /* OLED Display (SSD1306 128x64, P0.04=SDA, P0.05=SCL, VCC=P1.11) */
 #include <hal/nrf_gpio.h>
@@ -125,6 +157,7 @@ SYS_INIT(oled_vcc_init, POST_KERNEL, 70);
 static void read_battery_voltage_impl(void);
 static void update_tx_power_based_on_battery_impl(void);
 static void start_advertising(void);
+static void oled_check_sleep(void);
 
 /* OLED + BT state */
 static bool bt_connected_flag;
@@ -309,6 +342,38 @@ static ssize_t write_reset(struct bt_conn *conn, const struct bt_gatt_attr *attr
 	return len;
 }
 
+static void oled_apply_settings(void)
+{
+	if (device_is_ready(oled_dev)) {
+		display_set_contrast(oled_dev, oled_settings.contrast);
+		display_set_pixel_format(oled_dev, oled_settings.invert ? PIXEL_FORMAT_MONO10 : PIXEL_FORMAT_MONO01);
+		if (oled_settings.display_sleep_min == 0) {
+			display_blanking_off(oled_dev);
+		}
+	}
+	oled_last_activity = k_uptime_get();
+	printk("OLED settings applied: contrast=%u invert=%u sleep=%umin led=%u\n",
+	       oled_settings.contrast, oled_settings.invert, oled_settings.display_sleep_min, oled_settings.led_enable);
+}
+
+static ssize_t read_oled_settings(struct bt_conn *conn, const struct bt_gatt_attr *attr,
+				  void *buf, uint16_t len, uint16_t offset)
+{
+	return bt_gatt_attr_read(conn, attr, buf, len, offset, &oled_settings, sizeof(oled_settings));
+}
+
+static ssize_t write_oled_settings(struct bt_conn *conn, const struct bt_gatt_attr *attr,
+				   const void *buf, uint16_t len, uint16_t offset, uint8_t flags)
+{
+	if (offset + len > sizeof(oled_settings))
+		return BT_GATT_ERR(BT_ATT_ERR_INVALID_OFFSET);
+	memcpy((uint8_t *)&oled_settings + offset, buf, len);
+	oled_apply_settings();
+	k_work_reschedule_for_queue(&oled_work_q, &oled_work, K_NO_WAIT);
+	printk("OLED settings updated\n");
+	return len;
+}
+
 /* Service declaration */
 BT_GATT_SERVICE_DEFINE(custom_svc,
 	BT_GATT_PRIMARY_SERVICE(BT_UUID_CUSTOM_SERVICE),
@@ -324,6 +389,8 @@ BT_GATT_SERVICE_DEFINE(custom_svc,
 	BT_GATT_CHARACTERISTIC(BT_UUID_BATTERY_CHRC, BT_GATT_CHRC_READ | BT_GATT_CHRC_NOTIFY, BT_GATT_PERM_READ, read_battery, NULL, NULL),
 	BT_GATT_CCC(ccc_cfg_changed, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
 	BT_GATT_CHARACTERISTIC(BT_UUID_RESET_CHRC, BT_GATT_CHRC_WRITE, BT_GATT_PERM_WRITE, NULL, write_reset, NULL),
+	BT_GATT_CHARACTERISTIC(BT_UUID_OLED_SETTINGS_CHRC, BT_GATT_CHRC_READ | BT_GATT_CHRC_WRITE,
+			       BT_GATT_PERM_READ | BT_GATT_PERM_WRITE, read_oled_settings, write_oled_settings, &oled_settings),
 );
 
 /* --- Calibration & Timing --- */
@@ -442,6 +509,7 @@ static void connected(struct bt_conn *conn, uint8_t err)
 		oled_phase = PHASE_CONNECTED;
 		oled_sub_phase = 0;
 		imu_view_start = k_uptime_get();
+		oled_check_sleep();
 		k_work_reschedule_for_queue(&oled_work_q, &oled_work, K_NO_WAIT);
 	}
 }
@@ -643,7 +711,7 @@ static void audio_thread(void *p1, void *p2, void *p3)
 				smoothed_rms *= decay_factor;
 			}
 
-			if (gpio_is_ready_dt(&led_red_spec) && gpio_is_ready_dt(&led_green_spec) && gpio_is_ready_dt(&led_blue_spec)) {
+			if (oled_settings.led_enable && gpio_is_ready_dt(&led_red_spec) && gpio_is_ready_dt(&led_green_spec) && gpio_is_ready_dt(&led_blue_spec)) {
 				if (smoothed_rms < 0.004) { /* Silence */
 					gpio_pin_set_dt(&led_red_spec, 0); gpio_pin_set_dt(&led_green_spec, 0); gpio_pin_set_dt(&led_blue_spec, 0);
 				} else if (smoothed_rms < 0.012) { /* Low: Cyan/Blue */
@@ -1005,40 +1073,66 @@ static void oled_update_connected(void)
 	oled_flush();
 }
 
+static void oled_check_sleep(void)
+{
+	oled_last_activity = k_uptime_get();
+	if (oled_settings.display_sleep_min > 0 && device_is_ready(oled_dev)) {
+		display_blanking_off(oled_dev);
+	}
+}
+
 static void oled_work_handler(struct k_work *work)
 {
+	if (oled_settings.display_sleep_min > 0 &&
+	    k_uptime_get() - oled_last_activity > (int64_t)oled_settings.display_sleep_min * 60000) {
+		if (device_is_ready(oled_dev)) {
+			display_blanking_on(oled_dev);
+		}
+		k_work_reschedule_for_queue(&oled_work_q, &oled_work, K_SECONDS(30));
+		return;
+	}
+
 	if (oled_phase == PHASE_WELCOME) {
 		oled_clear();
 		oled_puts(16, 24, "Welcome!");
 		oled_flush();
 		generate_qr_code();
-		oled_phase = PHASE_QR;
-		qr_view_start = k_uptime_get();
 		oled_sub_phase = 0;
+		if (oled_settings.qr_enable) {
+			oled_phase = PHASE_QR;
+			qr_view_start = k_uptime_get();
+		} else {
+			oled_phase = PHASE_BEACON;
+		}
+		oled_last_activity = k_uptime_get();
 		k_work_reschedule_for_queue(&oled_work_q, &oled_work, K_SECONDS(2));
 	} else if (bt_connected_flag) {
+		oled_last_activity = k_uptime_get();
 		if (oled_sub_phase == 0) {
 			oled_update_connected();
-			if (k_uptime_get() - imu_view_start < 5000) {
-				k_work_reschedule_for_queue(&oled_work_q, &oled_work, K_MSEC(150));
+			if (oled_settings.view_override == 2) {
+				mic_view_start = k_uptime_get();
+				oled_sub_phase = 1;
+			} else if (oled_settings.view_override == 1 || k_uptime_get() - imu_view_start < (int64_t)oled_settings.imu_dwell_s * 1000) {
+				;
 			} else {
 				mic_view_start = k_uptime_get();
 				oled_sub_phase = 1;
-				k_work_reschedule_for_queue(&oled_work_q, &oled_work, K_MSEC(150));
 			}
+			k_work_reschedule_for_queue(&oled_work_q, &oled_work, K_MSEC(150));
 		} else {
 			oled_update_mic();
-			if (k_uptime_get() - mic_view_start < 5000) {
-				k_work_reschedule_for_queue(&oled_work_q, &oled_work, K_MSEC(150));
+			if (oled_settings.view_override == 2 || k_uptime_get() - mic_view_start < (int64_t)oled_settings.mic_dwell_s * 1000) {
+				;
 			} else {
 				imu_view_start = k_uptime_get();
 				oled_sub_phase = 0;
-				k_work_reschedule_for_queue(&oled_work_q, &oled_work, K_MSEC(150));
 			}
+			k_work_reschedule_for_queue(&oled_work_q, &oled_work, K_MSEC(150));
 		}
-	} else if (oled_phase == PHASE_QR) {
+	} else if (oled_phase == PHASE_QR && oled_settings.qr_enable) {
 		oled_draw_qr_code();
-		if (k_uptime_get() - qr_view_start < 10000) {
+		if (k_uptime_get() - qr_view_start < (int64_t)oled_settings.qr_dwell_s * 1000) {
 			k_work_reschedule_for_queue(&oled_work_q, &oled_work, K_MSEC(500));
 		} else {
 			oled_phase = PHASE_BEACON;
@@ -1046,10 +1140,15 @@ static void oled_work_handler(struct k_work *work)
 		}
 	} else {
 		oled_update_display();
-		oled_phase = PHASE_QR;
 		oled_sub_phase = 0;
-		qr_view_start = k_uptime_get();
-		k_work_reschedule_for_queue(&oled_work_q, &oled_work, K_SECONDS(2));
+		if (oled_settings.view_override == 1 || !oled_settings.qr_enable) {
+			oled_phase = PHASE_BEACON;
+			k_work_reschedule_for_queue(&oled_work_q, &oled_work, K_SECONDS(oled_settings.beacon_dwell_s));
+		} else {
+			oled_phase = PHASE_QR;
+			qr_view_start = k_uptime_get();
+			k_work_reschedule_for_queue(&oled_work_q, &oled_work, K_SECONDS(oled_settings.beacon_dwell_s));
+		}
 	}
 }
 
@@ -1089,6 +1188,7 @@ int main(void) {
 
 	/* Initialize OLED display */
 	oled_init();
+	oled_apply_settings();
 
 	k_work_init(&adv_start_work, adv_start_handler);
 

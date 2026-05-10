@@ -187,6 +187,52 @@
             }
             .hub-item:last-child { border-bottom: none; }
         }
+
+        .settings-btn {
+            background: transparent; border: 1px solid var(--border); color: var(--text-dim); 
+            padding: 8px 12px; border-radius: 8px; cursor: pointer; font-size: 1.2rem; 
+            transition: 0.3s; display: flex; align-items: center; gap: 6px;
+        }
+        .settings-btn:hover { border-color: var(--primary); color: var(--primary); box-shadow: 0 0 15px var(--primary-glow); }
+        
+        .modal-overlay {
+            display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.75); z-index: 1000; backdrop-filter: blur(4px);
+            justify-content: center; align-items: center;
+        }
+        .modal-overlay.active { display: flex; }
+        .modal-panel {
+            background: var(--card); border: 1px solid var(--border); border-radius: 16px;
+            padding: 30px; width: 90%; max-width: 520px; max-height: 85vh; overflow-y: auto;
+            box-shadow: 0 25px 60px rgba(0,0,0,0.8); position: relative;
+        }
+        .modal-panel h2 { margin: 0 0 20px 0; font-size: 1.1rem; letter-spacing: 2px; text-transform: uppercase; border-bottom: 1px solid var(--border); padding-bottom: 12px; display: flex; align-items: center; gap: 10px; }
+        .modal-close { position: absolute; top: 15px; right: 20px; background: none; border: none; color: var(--text-dim); font-size: 1.5rem; cursor: pointer; padding: 5px; }
+        .modal-close:hover { color: var(--accent); }
+        .settings-section { margin-bottom: 24px; }
+        .settings-section h3 { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 1.5px; color: var(--primary); margin: 0 0 12px 0; opacity: 0.8; }
+        .setting-row { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid rgba(30,38,48,0.5); }
+        .setting-row:last-child { border-bottom: none; }
+        .setting-label { font-size: 0.85rem; color: var(--text); }
+        .setting-label small { display: block; font-size: 0.7rem; color: var(--text-dim); margin-top: 2px; }
+        .setting-control { display: flex; align-items: center; gap: 8px; }
+        .setting-control input[type="number"] { width: 60px; padding: 5px 8px; background: #0a0f14; border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-family: 'JetBrains Mono'; font-size: 0.85rem; text-align: center; }
+        .setting-control input[type="number"]:focus { border-color: var(--primary); outline: none; }
+        .setting-control input[type="range"] { width: 120px; accent-color: var(--primary); }
+        .toggle-switch { position: relative; width: 40px; height: 22px; cursor: pointer; }
+        .toggle-switch input { opacity: 0; width: 0; height: 0; }
+        .toggle-slider { position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: #1a222b; border-radius: 22px; transition: 0.3s; border: 1px solid var(--border); }
+        .toggle-slider:before { content: ""; position: absolute; width: 16px; height: 16px; left: 2px; bottom: 2px; background: var(--text-dim); border-radius: 50%; transition: 0.3s; }
+        .toggle-switch input:checked + .toggle-slider { background: var(--primary); border-color: var(--primary); }
+        .toggle-switch input:checked + .toggle-slider:before { transform: translateX(18px); background: #05080a; }
+        .settings-actions { display: flex; gap: 12px; margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border); }
+        .settings-actions button { flex: 1; padding: 10px; font-size: 0.8rem; }
+        .contrast-value { min-width: 30px; text-align: center; font-family: 'JetBrains Mono'; font-size: 0.85rem; color: var(--primary); }
+        @media (max-width: 480px) {
+            .modal-panel { padding: 20px; width: 95%; }
+            .setting-row { flex-direction: column; align-items: flex-start; gap: 8px; }
+            .setting-control { width: 100%; justify-content: flex-end; }
+        }
     </style>
 </head>
 <body>
@@ -221,6 +267,138 @@
             <button id="connect-btn">Initiate Tactical Uplink</button>
             <button id="reset-btn" class="btn-danger" style="display: none;">DANGER: RESET TO BOOTLOADER</button>
             <div id="reconnect-status" style="font-size: 0.7rem; color: var(--accent); min-height: 1.2em;"></div>
+        </div>
+        <button id="settings-btn" class="settings-btn" title="OLED Settings">⚙</button>
+    </div>
+
+    <!-- Settings Modal -->
+    <div id="settings-modal" class="modal-overlay">
+        <div class="modal-panel">
+            <button class="modal-close" id="settings-close">&times;</button>
+            <h2>⚙ OLED Settings</h2>
+
+            <div class="settings-section">
+                <h3>View Dwell Times</h3>
+                <div class="setting-row">
+                    <span class="setting-label">Beacon View <small>Skynet AI Beacon info (disconnected)</small></span>
+                    <div class="setting-control">
+                        <input type="number" id="set-beacon-dwell" min="1" max="60" value="2">
+                        <span style="font-size:0.75rem;color:var(--text-dim);">sec</span>
+                    </div>
+                </div>
+                <div class="setting-row">
+                    <span class="setting-label">QR Code View <small>Scan QR for WebUI (disconnected)</small></span>
+                    <div class="setting-control">
+                        <input type="number" id="set-qr-dwell" min="1" max="60" value="10">
+                        <span style="font-size:0.75rem;color:var(--text-dim);">sec</span>
+                    </div>
+                </div>
+                <div class="setting-row">
+                    <span class="setting-label">IMU View <small>Accel/Gyro data (connected)</small></span>
+                    <div class="setting-control">
+                        <input type="number" id="set-imu-dwell" min="1" max="60" value="5">
+                        <span style="font-size:0.75rem;color:var(--text-dim);">sec</span>
+                    </div>
+                </div>
+                <div class="setting-row">
+                    <span class="setting-label">Mic PSD View <small>Power Spectral Density (connected)</small></span>
+                    <div class="setting-control">
+                        <input type="number" id="set-mic-dwell" min="1" max="60" value="5">
+                        <span style="font-size:0.75rem;color:var(--text-dim);">sec</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="settings-section">
+                <h3>View Mode (connected)</h3>
+                <div class="setting-row">
+                    <span class="setting-label">Active View <small>Auto cycles between Dashboard + Mic PSD</small></span>
+                    <div class="setting-control" style="gap: 16px;">
+                        <label style="display:flex;align-items:center;gap:4px;font-size:0.8rem;cursor:pointer;">
+                            <input type="radio" name="view-mode" value="0" checked> Auto
+                        </label>
+                        <label style="display:flex;align-items:center;gap:4px;font-size:0.8rem;cursor:pointer;">
+                            <input type="radio" name="view-mode" value="1"> Dashboard
+                        </label>
+                        <label style="display:flex;align-items:center;gap:4px;font-size:0.8rem;cursor:pointer;">
+                            <input type="radio" name="view-mode" value="2"> Mic PSD
+                        </label>
+                    </div>
+                </div>
+                <div class="setting-row">
+                    <span class="setting-label">Enable QR Code <small>Show QR scan code after reboot</small></span>
+                    <div class="setting-control">
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="set-qr-enable" checked>
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                </div>
+            </div>
+
+            <div class="settings-section">
+                <h3>Display</h3>
+                <div class="setting-row">
+                    <span class="setting-label">Contrast <small>OLED brightness (0-255)</small></span>
+                    <div class="setting-control">
+                        <input type="range" id="set-contrast" min="0" max="255" value="128">
+                        <span class="contrast-value" id="contrast-val">128</span>
+                    </div>
+                </div>
+                <div class="setting-row">
+                    <span class="setting-label">Invert Display <small>Swap black/white</small></span>
+                    <div class="setting-control">
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="set-invert">
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                </div>
+                <div class="setting-row">
+                    <span class="setting-label">Sleep Timeout <small>Auto-off display after inactivity (0=never)</small></span>
+                    <div class="setting-control">
+                        <input type="number" id="set-sleep-min" min="0" max="99" value="0" style="width:55px;">
+                        <span style="font-size:0.75rem;color:var(--text-dim);">min</span>
+                    </div>
+                </div>
+                <div class="setting-row">
+                    <span class="setting-label">LED Audio Feedback <small>RGB LED responds to audio level</small></span>
+                    <div class="setting-control">
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="set-led-enable" checked>
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                </div>
+            </div>
+
+            <div class="settings-section" style="border-top:1px solid var(--border);padding-top:12px;margin-bottom:0;">
+                <h3>System Info</h3>
+                <div class="setting-row">
+                    <span class="setting-label">Device Name</span>
+                    <span style="font-family:'JetBrains Mono';font-size:0.8rem;color:var(--primary);" id="info-device-name">Skynet AI Beacon</span>
+                </div>
+                <div class="setting-row">
+                    <span class="setting-label">BLE PIN</span>
+                    <span style="font-family:'JetBrains Mono';font-size:0.8rem;color:var(--primary);" id="info-pin">------</span>
+                </div>
+                <div class="setting-row">
+                    <span class="setting-label">Battery</span>
+                    <span style="font-family:'JetBrains Mono';font-size:0.8rem;color:var(--text-dim);" id="info-battery">-- mV / --%</span>
+                </div>
+                <div class="setting-row">
+                    <span class="setting-label">TX Power</span>
+                    <span style="font-family:'JetBrains Mono';font-size:0.8rem;color:var(--text-dim);" id="info-txpower">-- dBm</span>
+                </div>
+                <div class="setting-row">
+                    <span class="setting-label">Firmware</span>
+                    <span style="font-family:'JetBrains Mono';font-size:0.8rem;color:var(--text-dim);">nRF52840 BLE Sensor Hub v1.0</span>
+                </div>
+            </div>
+            <div class="settings-actions">
+                <button id="settings-save" style="background:var(--primary);color:var(--bg);border-color:var(--primary);">Save Settings</button>
+                <button id="settings-cancel">Cancel</button>
+            </div>
         </div>
     </div>
 
@@ -328,6 +506,7 @@
     const TX_POWER_CHAR = '12345678-1234-5678-1234-56789abcdef4';
     const BATTERY_CHAR = '12345678-1234-5678-1234-56789abcdef5';
     const RESET_CHAR = '12345678-1234-5678-1234-56789abcdef6';
+    const OLED_SETTINGS_CHAR = '12345678-1234-5678-1234-56789abcdef7';
 
     // --- Senior Dev: NFC Comfort Trick PIN Parsing & Timer ---
     const urlParams = new URLSearchParams(window.location.search);
@@ -537,6 +716,99 @@
     let bluetoothDevice = null;
     let bluetoothServer = null;
     let manualDisconnect = false;
+    let deviceName = '';
+    let settingsService = null;
+
+    // --- Settings Panel ---
+    function openSettingsPanel() {
+        document.getElementById('settings-modal').classList.add('active');
+        document.getElementById('info-device-name').innerText = deviceName || 'Skynet AI Beacon';
+        document.getElementById('info-pin').innerText = urlPin || 'N/A';
+        if (settingsService) {
+            readSettingsFromDevice();
+            updateSystemInfo();
+        } else {
+            document.getElementById('settings-save').disabled = true;
+        }
+    }
+
+    async function updateSystemInfo() {
+        if (!settingsService) return;
+        try {
+            const battChar = await settingsService.getCharacteristic(BATTERY_CHAR);
+            const v = await battChar.readValue();
+            const dv = new DataView(v.buffer);
+            const mv = dv.getUint16(0, true);
+            const soc = dv.getUint8(2);
+            document.getElementById('info-battery').innerText = mv + ' mV / ' + soc + '%';
+        } catch(e) {}
+        try {
+            const txChar = await settingsService.getCharacteristic(TX_POWER_CHAR);
+            const v = await txChar.readValue();
+            document.getElementById('info-txpower').innerText = v.getInt8(0) + ' dBm';
+        } catch(e) {}
+    }
+
+    function closeSettingsPanel() {
+        document.getElementById('settings-modal').classList.remove('active');
+    }
+
+    document.getElementById('settings-btn').addEventListener('click', openSettingsPanel);
+    document.getElementById('settings-close').addEventListener('click', closeSettingsPanel);
+    document.getElementById('settings-cancel').addEventListener('click', closeSettingsPanel);
+
+    const contrastSlider = document.getElementById('set-contrast');
+    const contrastVal = document.getElementById('contrast-val');
+    contrastSlider.addEventListener('input', () => { contrastVal.textContent = contrastSlider.value; });
+
+    async function readSettingsFromDevice() {
+        try {
+            const c = await settingsService.getCharacteristic(OLED_SETTINGS_CHAR);
+            const v = await c.readValue();
+            const dv = new DataView(v.buffer);
+            document.getElementById('set-beacon-dwell').value = dv.getUint8(0);
+            document.getElementById('set-qr-dwell').value = dv.getUint8(1);
+            document.getElementById('set-imu-dwell').value = dv.getUint8(2);
+            document.getElementById('set-mic-dwell').value = dv.getUint8(3);
+            const override = dv.getUint8(4);
+            document.querySelector('input[name="view-mode"][value="' + override + '"]').checked = true;
+            document.getElementById('set-qr-enable').checked = dv.getUint8(5) !== 0;
+            contrastSlider.value = dv.getUint8(6);
+            contrastVal.textContent = dv.getUint8(6);
+            document.getElementById('set-invert').checked = dv.getUint8(7) !== 0;
+            document.getElementById('set-sleep-min').value = dv.getUint8(8);
+            document.getElementById('set-led-enable').checked = dv.getUint8(9) !== 0;
+            document.getElementById('settings-save').disabled = false;
+            console.log("Senior-UI: OLED settings loaded from device.");
+        } catch(e) {
+            console.error("Senior-UI: Failed to read OLED settings:", e);
+        }
+    }
+
+    async function writeSettingsToDevice() {
+        if (!settingsService) return;
+        const buf = new Uint8Array(10);
+        buf[0] = parseInt(document.getElementById('set-beacon-dwell').value) || 2;
+        buf[1] = parseInt(document.getElementById('set-qr-dwell').value) || 10;
+        buf[2] = parseInt(document.getElementById('set-imu-dwell').value) || 5;
+        buf[3] = parseInt(document.getElementById('set-mic-dwell').value) || 5;
+        buf[4] = parseInt(document.querySelector('input[name="view-mode"]:checked').value) || 0;
+        buf[5] = document.getElementById('set-qr-enable').checked ? 1 : 0;
+        buf[6] = parseInt(contrastSlider.value) || 128;
+        buf[7] = document.getElementById('set-invert').checked ? 1 : 0;
+        buf[8] = parseInt(document.getElementById('set-sleep-min').value) || 0;
+        buf[9] = document.getElementById('set-led-enable').checked ? 1 : 0;
+        try {
+            const c = await settingsService.getCharacteristic(OLED_SETTINGS_CHAR);
+            await c.writeValue(buf);
+            console.log("Senior-UI: OLED settings written to device.");
+            closeSettingsPanel();
+        } catch(e) {
+            console.error("Senior-UI: Failed to write OLED settings:", e);
+        }
+    }
+
+    document.getElementById('settings-save').addEventListener('click', writeSettingsToDevice);
 
     async function disconnectDevice() {
         manualDisconnect = true;
@@ -567,6 +839,7 @@
         bluetoothDevice = null;
         bluetoothServer = null;
         window.currentBLEService = null;
+        settingsService = null;
         manualDisconnect = false;
     }
 
@@ -604,6 +877,7 @@
                 bluetoothServer = server;
                 const service = await bluetoothServer.getPrimaryService(SERVICE_UUID);
                 window.currentBLEService = service;
+                settingsService = service;
                 await startServicesAndRender(service);
                 console.log(`Senior-UI: Auto-reconnect successful (attempt ${attempt})`);
                 statusEl.innerText = '';
@@ -611,6 +885,7 @@
                 btn.classList.add('disconnect');
                 document.getElementById('status-text').innerText = 'UPLINK ACTIVE';
                 document.getElementById('tactical-header').classList.add('connected');
+                document.getElementById('bt-peer').innerText = deviceName;
                 document.getElementById('reset-btn').style.display = 'block';
                 return;
             } catch(e) {
@@ -627,10 +902,11 @@
                     bluetoothDevice = null;
                     bluetoothServer = null;
                     window.currentBLEService = null;
+                    settingsService = null;
                 }
             }
         }
-        
+
         if (bluetoothDevice) {
             setTimeout(tryReconnect, 1000);
         }
@@ -809,6 +1085,7 @@
             }
             bluetoothDevice = null;
             bluetoothServer = null;
+            settingsService = null;
 
             console.log("Senior-UI: Requesting fresh Bluetooth Device...");
             bluetoothDevice = await navigator.bluetooth.requestDevice({
@@ -818,22 +1095,25 @@
             
             bluetoothDevice.addEventListener('gattserverdisconnected', onDisconnected);
             
+            deviceName = bluetoothDevice.name || 'SKYNET-UNIT-SENSE';
             console.log("Senior-UI: Initiating GATT Handshake...");
             bluetoothServer = await bluetoothDevice.gatt.connect();
             
             console.log("Senior-UI: Discovery of Primary Service...");
             const service = await bluetoothServer.getPrimaryService(SERVICE_UUID);
             window.currentBLEService = service;
+            settingsService = service;
             
             document.getElementById('tactical-header').classList.add('connected');
             document.getElementById('status-text').innerText = 'UPLINK ACTIVE';
-            document.getElementById('bt-peer').innerText = bluetoothDevice.name || 'SKYNET-UNIT-SENSE';
+            document.getElementById('bt-peer').innerText = deviceName;
             
             btn.innerText = 'Disconnect Tactical Uplink';
             btn.classList.add('disconnect');
             document.getElementById('reset-btn').style.display = 'block';
 
             await startServicesAndRender(service);
+            document.getElementById('bt-peer').innerText = deviceName;
 
             // --- Auto-Hide PIN after successful connection ---
             removePinDisplay();
