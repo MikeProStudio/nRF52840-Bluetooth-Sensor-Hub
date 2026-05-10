@@ -24,6 +24,7 @@
 #include <stdio.h>
 #include <zephyr/drivers/display.h>
 #include "font8x8.h"
+#include "font8x16.h"
 #include "qrcodegen.h"
 
 /* --- Hardware Definitions --- */
@@ -979,6 +980,29 @@ static void oled_puts(uint16_t x, uint16_t y, const char *str)
 	oled_puts_w(x, y, str, 8);
 }
 
+static void oled_putc_8x16(uint16_t x, uint16_t y, char c)
+{
+	if (c < 0x20 || c > 0x7E) c = ' ';
+	uint8_t idx = c - 0x20;
+	for (int row = 0; row < 16 && (y + row) < OLED_H; row++) {
+		uint8_t bits = font8x16[idx][row];
+		for (int col = 0; col < 8 && (x + col) < OLED_W; col++) {
+			if (bits & (1 << (7 - col)))
+				oled_set_pixel(x + col, y + row, 1);
+		}
+	}
+}
+
+static void oled_puts_8x16(uint16_t x, uint16_t y, const char *str)
+{
+	while (*str) {
+		oled_putc_8x16(x, y, *str);
+		x += 8;
+		if (x + 8 > OLED_W) { x = 0; y += 16; }
+		str++;
+	}
+}
+
 static void oled_clear(void)
 {
 	memset(oled_fb, 0, sizeof(oled_fb));
@@ -1043,9 +1067,9 @@ static void oled_draw_qr_code(void)
 
 	int pin_x = (qr_code_ready && qrcodegen_getSize(qr_code_buf) * 2 + 2 < OLED_W)
 	            ? qrcodegen_getSize(qr_code_buf) * 2 + 8 : OLED_W - 48;
-	oled_puts(pin_x, (OLED_H - 16) / 2, "PIN:");
+	oled_puts_8x16(pin_x, (OLED_H - 32) / 2, "PIN:");
 	snprintf(buf, sizeof(buf), "%06u", generated_passkey);
-	oled_puts(pin_x, (OLED_H - 16) / 2 + 12, buf);
+	oled_puts_8x16(pin_x, (OLED_H - 32) / 2 + 16, buf);
 
 	oled_flush();
 }
@@ -1057,13 +1081,13 @@ static void oled_update_display(void)
 	oled_clear();
 
 	snprintf(buf, sizeof(buf), "Skynet AI Beacon");
-	oled_puts(0, 0, buf);
+	oled_puts_8x16(0, 0, buf);
 
 	snprintf(buf, sizeof(buf), "PIN: %06u", generated_passkey);
-	oled_puts(0, 16, buf);
+	oled_puts_8x16(0, 16, buf);
 
 	snprintf(buf, sizeof(buf), "BAT: %umV %u%%", battery_status.voltage_mv, battery_status.soc);
-	oled_puts(0, 32, buf);
+	oled_puts_8x16(0, 32, buf);
 
 	const char *status_str;
 	switch (battery_status.status) {
@@ -1072,7 +1096,7 @@ static void oled_update_display(void)
 	default: status_str = "Battery";    break;
 	}
 	snprintf(buf, sizeof(buf), "PWR: %s", status_str);
-	oled_puts(0, 48, buf);
+	oled_puts_8x16(0, 48, buf);
 
 	oled_flush();
 }
@@ -1143,11 +1167,9 @@ static void oled_update_mic(void)
 
 static void oled_update_connected(void)
 {
-	char buf[24], xs[10], ys[10], zs[10];
+	char buf[28], xs[10], ys[10], zs[10], gxs[10], gys[10], gzs[10];
 
 	oled_clear();
-
-	oled_puts(0, 0, "Skynet AI Beacon");
 
 	int32_t ax = (int32_t)sys_get_le32(&accel_data.data[0]);
 	int32_t ay = (int32_t)sys_get_le32(&accel_data.data[4]);
@@ -1157,16 +1179,7 @@ static void oled_update_connected(void)
 	int32_t gz = (int32_t)sys_get_le32(&gyro_data.data[8]);
 
 	fmt_val(xs, ax); fmt_val(ys, ay); fmt_val(zs, az);
-	oled_puts_w(0, 10, "   X:      Y:      Z:", 6);
-	snprintf(buf, sizeof(buf), "Acc %s %s %s", xs, ys, zs);
-	oled_puts_w(0, 20, buf, 6);
-
-	fmt_val(xs, gx); fmt_val(ys, gy); fmt_val(zs, gz);
-	snprintf(buf, sizeof(buf), "Gyr %s %s %s", xs, ys, zs);
-	oled_puts_w(0, 30, buf, 6);
-
-	snprintf(buf, sizeof(buf), "BAT %umV %u%%", battery_status.voltage_mv, battery_status.soc);
-	oled_puts_w(0, 42, buf, 6);
+	fmt_val(gxs, gx); fmt_val(gys, gy); fmt_val(gzs, gz);
 
 	const char *pwr;
 	switch (battery_status.status) {
@@ -1174,8 +1187,19 @@ static void oled_update_connected(void)
 	case 2:  pwr = "USB Power";  break;
 	default: pwr = "Battery";    break;
 	}
-	snprintf(buf, sizeof(buf), "PWR %s", pwr);
-	oled_puts_w(0, 52, buf, 6);
+
+	oled_puts_w(0, 0, "Acc.(m/s^2)", 6);
+	snprintf(buf, sizeof(buf), "X%s Y%s Z%s", xs, ys, zs);
+	oled_puts_w(0, 10, buf, 6);
+
+	oled_puts_w(0, 22, "Gyr.(deg/s)", 6);
+	snprintf(buf, sizeof(buf), "X%s Y%s Z%s", gxs, gys, gzs);
+	oled_puts_w(0, 32, buf, 6);
+
+	snprintf(buf, sizeof(buf), "BAT %umV %u%%", battery_status.voltage_mv, battery_status.soc);
+	oled_puts_w(0, 44, buf, 6);
+	snprintf(buf, sizeof(buf), "PWR %s TX %ddBm", pwr, tx_power_level);
+	oled_puts_w(0, 54, buf, 6);
 
 	oled_flush();
 }
@@ -1201,7 +1225,7 @@ static void oled_work_handler(struct k_work *work)
 
 	if (oled_phase == PHASE_WELCOME) {
 		oled_clear();
-		oled_puts(16, 24, "Welcome!");
+		oled_puts_8x16(20, 24, "Welcome!");
 		oled_flush();
 		generate_qr_code();
 		oled_sub_phase = 0;
