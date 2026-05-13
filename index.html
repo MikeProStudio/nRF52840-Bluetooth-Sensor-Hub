@@ -609,6 +609,7 @@
                 <button id="rec-ctrl-btn" disabled>Record</button>
                 <button id="play-ctrl-btn" disabled>Play</button>
                 <button id="testtone-btn" style="padding:8px 14px;font-size:0.7rem;border-color:var(--text-dim);color:var(--text-dim);">Test Tone</button>
+                <button id="assistant-toggle-btn" style="display:none;padding:8px 14px;font-size:0.7rem;" disabled>AI Mode: OFF</button>
             </div>
             <audio id="audio-player" style="display:none" controls></audio>
             <div class="gain-row">
@@ -630,10 +631,10 @@
             </div>
         </div>
         <div class="card">
-            <h2>AI Assistant</h2>
+            <h2>AI Assistant <span id="assistant-badge" style="display:none;font-size:0.6rem;color:var(--green);border:1px solid var(--green);border-radius:4px;padding:2px 6px;margin-left:8px;">ACTIVE</span></h2>
             <div class="chat-container">
                 <div class="chat-messages" id="chat-messages">
-                    <div class="chat-msg system">Connect to backend and start recording to use AI.</div>
+                    <div class="chat-msg system">Connect to backend and enable --assistant to use AI.</div>
                 </div>
                 <div class="chat-input-row">
                     <input type="text" id="chat-input" placeholder="Ask AI anything..." disabled>
@@ -1449,19 +1450,63 @@
                 document.getElementById('ble-connect-btn').disabled = false;
                 document.getElementById('ble-scan-btn').style.display = 'inline-block';
                 document.getElementById('ble-scan-btn').disabled = false;
+                // Show assistant toggle if backend supports it
+                fetch(backendBaseUrl + '/api/assistant/status')
+                    .then(r => r.json())
+                    .then(s => {
+                        if (s.enabled) {
+                            const btn = document.getElementById('assistant-toggle-btn');
+                            btn.style.display = 'inline-block';
+                            btn.disabled = false;
+                            if (s.active) {
+                                btn.innerText = 'AI Mode: ON';
+                                btn.style.borderColor = 'var(--accent)';
+                                btn.style.color = 'var(--accent)';
+                            }
+                        }
+                    }).catch(() => {});
                 console.log('Backend connected');
             };
             backendWs.onmessage = (event) => {
                 try {
                     const msg = JSON.parse(event.data);
                     if (msg.type === 'status') {
-                    if (msg.data.notifications_alive) {
-                        document.getElementById('ble-status').innerHTML = '<span style="color:var(--primary);">Online</span>';
-                    } else if (msg.data.connected) {
-                        document.getElementById('ble-status').innerHTML = '<span style="color:var(--audio);">Connecting...</span>';
-                    } else {
-                        document.getElementById('ble-status').innerHTML = '<span style="color:var(--text-dim);">Offline</span>';
-                    }
+                        if (msg.data.notifications_alive) {
+                            document.getElementById('ble-status').innerHTML = '<span style="color:var(--primary);">Online</span>';
+                        } else if (msg.data.connected) {
+                            document.getElementById('ble-status').innerHTML = '<span style="color:var(--audio);">Connecting...</span>';
+                        } else {
+                            document.getElementById('ble-status').innerHTML = '<span style="color:var(--text-dim);">Offline</span>';
+                        }
+                    } else if (msg.type === 'recording_vad') {
+                        const durEl = document.getElementById('recording-duration');
+                        if (msg.data.status === 'started') {
+                            durEl.innerText = '🎤 Voice activated...';
+                            document.getElementById('rec-ctrl-btn').innerText = '● REC';
+                            document.getElementById('rec-ctrl-btn').style.borderColor = 'var(--accent)';
+                        } else if (msg.data.status === 'stopped') {
+                            durEl.innerText = 'Voice recording: ' + (msg.data.duration_s || 0).toFixed(1) + 's';
+                        }
+                        } else if (msg.type === 'recording_ready') {
+                        const dur = msg.data.duration_s || 0;
+                        if (dur > 0.5) {
+                            document.getElementById('play-ctrl-btn').disabled = false;
+                            fetch(backendBaseUrl + (msg.data.url || '/api/audio/last_vad.wav'))
+                                .then(r => r.blob())
+                                .then(blob => {
+                                    window._lastWavBlob = blob;
+                                    if (audioUrl) URL.revokeObjectURL(audioUrl);
+                                    audioUrl = URL.createObjectURL(blob);
+                                    document.getElementById('audio-player').src = audioUrl;
+                                    document.getElementById('recording-duration').innerText =
+                                        '🎤 Recording: ' + dur.toFixed(1) + 's';
+                                });
+                        }
+                    } else if (msg.type === 'assistant_result') {
+                        const sttOut = document.getElementById('stt-output');
+                        sttOut.innerHTML = '<div style="font-size:0.9rem">' + (msg.data.text || '') + '</div>';
+                        addChatMessage('🎤 "' + (msg.data.text || '') + '"', 'user');
+                        addChatMessage('✅ ' + (msg.data.result || 'Done') + ' (' + (msg.data.command ? msg.data.command.action : '') + ')', 'ai');
                     }
                 } catch (e) {}
             };
@@ -1495,6 +1540,8 @@
         document.getElementById('ble-scan-btn').style.display = 'none';
         document.getElementById('ble-scan-btn').disabled = true;
         document.getElementById('ble-status').innerHTML = '<span style="color:var(--text-dim);">Offline</span>';
+        document.getElementById('assistant-toggle-btn').style.display = 'none';
+        document.getElementById('assistant-toggle-btn').disabled = true;
         bleConnected = false;
         if (recState === 'rec') recStop();
         backendWs = null;
@@ -1701,9 +1748,7 @@
         if (!backendWs) return; const btn = document.getElementById('testtone-btn');
         btn.disabled = true; btn.innerText = 'Loading...';
         try {
-            const r = await fetch(backendBaseUrl + '/api/audio/testtone/raw');
-            if (!r.ok) throw new Error('fail');
-            const blob = await r.blob();
+            const blob = await (await fetch(backendBaseUrl + '/api/audio/testtone/raw')).blob();
             window._lastWavBlob = blob;
             if (audioUrl) URL.revokeObjectURL(audioUrl);
             audioUrl = URL.createObjectURL(blob);
@@ -1712,9 +1757,37 @@
             document.getElementById('play-ctrl-btn').disabled = false;
             document.getElementById('recording-duration').innerText = 'Test tone: 2.0s @440Hz';
             p.play();
-            console.log('Test tone playing');
         } catch(e) { console.error('Test tone:', e); }
         btn.innerText = 'Test Tone'; btn.disabled = false;
+    });
+
+    // ── Assistant Mode Toggle ──
+    document.getElementById('assistant-toggle-btn').addEventListener('click', async () => {
+        if (!backendWs) return;
+        const btn = document.getElementById('assistant-toggle-btn');
+        const isOn = btn.innerText.includes('ON');
+        try {
+            const r = await fetch(backendBaseUrl + '/api/assistant/toggle', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({active: !isOn})
+            });
+            if (!r.ok) throw new Error('toggle failed');
+            const data = await r.json();
+            if (data.active) {
+                btn.innerText = 'AI Mode: ON';
+                btn.style.borderColor = 'var(--accent)';
+                btn.style.color = 'var(--accent)';
+                document.getElementById('recording-duration').innerText = '🤖 AI Mode: Listening...';
+                addChatMessage('🤖 AI Assistant activated. Speak a command.', 'system');
+            } else {
+                btn.innerText = 'AI Mode: OFF';
+                btn.style.borderColor = 'var(--text-dim)';
+                btn.style.color = 'var(--text-dim)';
+                document.getElementById('recording-duration').innerText = 'AI Mode: OFF';
+                addChatMessage('AI Assistant deactivated.', 'system');
+            }
+        } catch(e) { console.error('Toggle error:', e); }
     });
 
     // ── Sensors WebSocket (IMU/Gyro/Battery via backend) ──
@@ -1879,6 +1952,25 @@
             output.appendChild(p);
             if (text.startsWith('(Model is downloading')) {
                 setTimeout(() => document.getElementById('stt-process-btn').click(), 5000);
+            } else if (text && !text.startsWith('(STT') && !text.startsWith('(Model') && text !== '(no speech detected)') {
+                // Forward to AI Assistant if enabled
+                try {
+                    const execResp = await fetch(`${backendBaseUrl}/api/assistant/exec`, {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({text: text})
+                    });
+                    if (execResp.ok) {
+                        const execData = await execResp.json();
+                        const result = execData.result || 'Executed';
+                        const action = execData.command ? execData.command.action : '';
+                        addChatMessage(`🎤 "${text}"`, 'user');
+                        addChatMessage(`✅ ${result} (${action})`, 'ai');
+                        document.getElementById('recording-duration').innerText = result;
+                    }
+                } catch(e) {
+                    // Assistant not enabled, silent
+                }
             }
             console.log('STT result:', text);
         } catch (e) {
@@ -1907,16 +1999,34 @@
         addChatMessage(text, 'user');
 
         try {
-            const resp = await fetch(`${backendBaseUrl}/api/ai/query`, {
+            // Try assistant exec endpoint first
+            const resp = await fetch(`${backendBaseUrl}/api/assistant/exec`, {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({text: text})
             });
-            if (!resp.ok) throw new Error('AI query failed');
-            const data = await resp.json();
-            addChatMessage(data.response, 'ai');
+            if (resp.ok) {
+                const data = await resp.json();
+                const action = data.command ? data.command.action : 'unknown';
+                addChatMessage(`✅ ${data.result || 'Done'} (action: ${action})`, 'ai');
+            } else {
+                const data = await resp.json();
+                // Fall back to regular AI chat
+                if (data.detail && data.detail.includes('not enabled')) {
+                    addChatMessage('Assistant not enabled. Restart with --assistant', 'system');
+                    return;
+                }
+                const fallback = await fetch(`${backendBaseUrl}/api/ai/query`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({text: text})
+                });
+                if (!fallback.ok) throw new Error('Fallback failed');
+                const fb = await fallback.json();
+                addChatMessage(fb.response, 'ai');
+            }
         } catch (e) {
-            addChatMessage('AI query failed: ' + e.message, 'system');
+            addChatMessage('Error: ' + e.message, 'system');
         }
     });
 

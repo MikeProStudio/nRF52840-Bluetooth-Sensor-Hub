@@ -173,6 +173,9 @@ class BLEClient:
             if len(data) >= 8:
                 rms = struct.unpack_from('<I', data, 0)[0]
                 zcr = struct.unpack_from('<I', data, 4)[0]
+                self._level_count = getattr(self, '_level_count', 0) + 1
+                if self._level_count % 100 == 1:
+                    logger.info(f"Audio level notify #{self._level_count}: rms={rms} zcr={zcr} len={len(data)}")
                 if self.on_audio_level:
                     self.on_audio_level(rms, zcr)
         except Exception as e:
@@ -303,12 +306,12 @@ class BLEClient:
 
     @property
     def notifications_alive(self) -> bool:
-        """True if notifications received within last 5 seconds"""
+        """True if notifications received within last 10 seconds, or just connected."""
         if not self.is_connected:
             return False
         if self._last_notify_time == 0:
-            return False  # never received a notification
-        return (time.time() - self._last_notify_time) < 5.0
+            return True  # new connection, give time for first notification
+        return (time.time() - self._last_notify_time) < 10.0
 
     @property
     def elapsed(self) -> float:

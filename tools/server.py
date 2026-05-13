@@ -18,6 +18,10 @@ from ble_client import BLEClient, AUDIO_STREAM_CHRC_UUID
 from audio_buffer import AudioRingBuffer
 from stt_engine import STTEngine
 from ai_client import AIClient
+from intent_parser import IntentParser
+from browser_controller import BrowserController
+from system_controller import SystemController
+from action_executor import ActionExecutor
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("server")
@@ -30,6 +34,11 @@ ble_client = BLEClient()
 audio_buffer = AudioRingBuffer(max_duration_s=60)
 stt_engine = STTEngine(model_size="small", device="cpu", compute_type="int8", lang="de")
 ai_client = AIClient()
+intent_parser = IntentParser(ai_client)
+browser_ctrl = BrowserController()
+system_ctrl = SystemController()
+action_exec = ActionExecutor(browser_ctrl, system_ctrl)
+_assistant_enabled = False
 
 _loop = None
 
@@ -74,6 +83,8 @@ _session_buffer = bytearray()
 
 def on_audio_chunk(pcm_bytes: bytes):
     global _audio_chunk_count, _session_active, _session_buffer
+    global _vad_voice_active, _vad_voice_count, _vad_silence_count, _vad_log_count
+    global _vad_noise_floor, _vad_max_rms
     _audio_chunk_count += 1
     if _audio_chunk_count % 50 == 1:
         logger.info(f"on_audio_chunk #{_audio_chunk_count}: {len(pcm_bytes)} bytes, {len(audio_websockets)} ws")
@@ -82,6 +93,56 @@ def on_audio_chunk(pcm_bytes: bytes):
         _session_buffer.extend(pcm_bytes)
     stt_engine.feed_audio(pcm_bytes)
     _safe_create_task(broadcast_audio(pcm_bytes))
+
+    # PCM-based Voice Activity Detection
+    if len(pcm_bytes) >= 4:
+        import struct, math
+        n = len(pcm_bytes) // 2
+        samples = struct.unpack(f'<{n}h', pcm_bytes)
+        rms_val = int(math.sqrt(sum(s*s for s in samples) / n))
+
+        samples = struct.unpack(f'<{n}h', pcm_bytes)
+        rms_val = int(math.sqrt(sum(s*s for s in samples) / n))
+
+        _vad_log_count += 1
+
+        # Adaptive noise floor tracking (slowly rises, fast drops)
+        if rms_val < _vad_noise_floor or _vad_noise_floor == 0:
+            _vad_noise_floor = rms_val
+        elif not _vad_voice_active:
+            _vad_noise_floor = int(_vad_noise_floor * 0.99 + rms_val * 0.01)
+
+        adaptive_threshold = max(_vad_noise_floor * 3 + 1000, VAD_MIN_THRESHOLD)
+
+        # Track peak RMS during utterance
+        if rms_val > _vad_max_rms:
+            _vad_max_rms = rms_val
+
+        if _vad_log_count % 100 == 0:
+            logger.info("PCM-RMS=%d noise=%d thr=%d active=%s vc=%d sc=%d",
+                        rms_val, _vad_noise_floor, adaptive_threshold,
+                        _vad_voice_active, _vad_voice_count, _vad_silence_count)
+
+        if rms_val > adaptive_threshold:
+            _vad_voice_count += 1
+            _vad_silence_count = 0
+            if not _vad_voice_active and _vad_voice_count >= VAD_TRIGGER:
+                _vad_voice_active = True
+                _vad_voice_count = VAD_TRIGGER
+                _vad_max_rms = rms_val
+                logger.info("Voice! (RMS=%d noise=%d thr=%d mode=%s)",
+                            rms_val, _vad_noise_floor, adaptive_threshold,
+                            "AI" if _assistant_mode_active else "VAD")
+                asyncio.run_coroutine_threadsafe(_auto_start_recording(), _loop)
+        else:
+            _vad_silence_count += 1
+            _vad_voice_count = 0
+            if _vad_voice_active and _vad_silence_count >= VAD_SILENCE_END:
+                _vad_voice_active = False
+                _vad_silence_count = 0
+                _vad_noise_floor = int(_vad_noise_floor * 0.7 + rms_val * 0.3)
+                logger.info("Silence (RMS=%d noise=%d peak=%d)", rms_val, _vad_noise_floor, _vad_max_rms)
+                asyncio.run_coroutine_threadsafe(_auto_stop_recording(), _loop)
 
 
 async def broadcast_audio(pcm_bytes: bytes):
@@ -121,6 +182,67 @@ ble_client.on_connected = on_ble_connected
 ble_client.on_disconnected = on_ble_disconnected
 ble_client.on_accel = lambda x, y, z: _broadcast_sensor("accel", {"x": round(x,2), "y": round(y,2), "z": round(z,2)})
 ble_client.on_gyro = lambda x, y, z: _broadcast_sensor("gyro", {"x": round(x,1), "y": round(y,1), "z": round(z,1)})
+
+# Voice activity detection + auto-recording (PCM-based, adaptive threshold)
+_vad_voice_active = False
+_vad_voice_count = 0
+_vad_silence_count = 0
+VAD_MIN_THRESHOLD = 5000  # minimum adaptive threshold (noise floor hits 4000, so 5000 catches speech)
+VAD_TRIGGER = 6        # consecutive frames above threshold to trigger start
+VAD_SILENCE_END = 40   # consecutive silence frames to stop
+_vad_log_count = 0
+_vad_noise_floor = 0   # adaptive noise floor tracking
+_vad_max_rms = 0       # peak RMS during current utterance
+VAD_MIN_THRESHOLD = 3000  # minimum adaptive threshold
+
+async def _auto_start_recording():
+    global _session_active, _session_buffer
+    if _session_active or not ble_client.is_connected:
+        return
+    _session_active = True
+    _session_buffer = bytearray()
+    logger.info("Voice-activated recording started")
+    broadcast_event("recording_vad", {"status": "started", "method": "voice"})
+
+async def _auto_stop_recording():
+    global _session_active, _session_buffer, _last_vad_wav
+    if not _session_active:
+        return
+    _session_active = False
+    pcm_data = bytes(_session_buffer)
+    _session_buffer = bytearray()
+    dur = len(pcm_data) / (16000 * 2)
+    logger.info(f"Voice-activated recording stopped: {dur:.1f}s")
+    broadcast_event("recording_vad", {"status": "stopped", "duration_s": round(dur, 1)})
+    if dur > 0.5:
+        import io, wave
+        buf = io.BytesIO()
+        with wave.open(buf, 'wb') as wf:
+            wf.setnchannels(1); wf.setsampwidth(2); wf.setframerate(16000)
+            wf.writeframes(pcm_data)
+        _last_vad_wav = buf.getvalue()
+        audio_buffer.write(pcm_data)
+        broadcast_event("recording_ready", {"duration_s": round(dur, 1), "url": "/api/audio/last_vad.wav"})
+
+        # Auto-execute: transcribe + assistant command
+        if _assistant_mode_active:
+            logger.info("Assistant mode: auto-transcribing...")
+            text = await asyncio.get_event_loop().run_in_executor(
+                None, stt_engine.process_file, pcm_data)
+            logger.info("Assistant mode STT: %s", text)
+            if text and not text.startswith("(STT") and not text.startswith("(Model"):
+                cmd = intent_parser.parse(text)
+                result = await action_exec.execute(cmd)
+                broadcast_event("assistant_result", {
+                    "text": text,
+                    "command": cmd,
+                    "result": result,
+                })
+                logger.info("Assistant: %s -> %s", text, result)
+
+_last_vad_wav = None
+_assistant_mode_active = False
+
 ble_client.on_audio_level = lambda rms, zcr: _broadcast_sensor("audio_level", {"rms": rms, "zcr": zcr})
 ble_client.on_battery = lambda mv, soc, status: _broadcast_sensor("battery", {"voltage_mv": mv, "soc": soc, "status": status})
 ble_client.on_tx_power = lambda dbm: _broadcast_sensor("tx_power", {"dbm": dbm})
@@ -162,7 +284,7 @@ async def lifespan(app: FastAPI):
     logger.info("=" * 50)
     logger.info("Skynet AI Audio Bridge starting...")
     logger.info(f"Open http://localhost:8765/ in your browser")
-    logger.info(f"Click 'CONNECT' to connect to nRF52 (BLE)")
+    logger.info(f"Add --assistant for AI voice control (Ollama + Playwright)")
     logger.info("=" * 50)
     yield
     logger.info("Shutting down...")
@@ -454,40 +576,29 @@ async def test_tone_raw():
         val = int(math.sin(2 * math.pi * freq * i / sample_rate) * 16000)
         pcm[i * 2] = val & 0xFF
         pcm[i * 2 + 1] = (val >> 8) & 0xFF
-
     buf = io.BytesIO()
     with wave.open(buf, 'wb') as wf:
-        wf.setnchannels(1)
-        wf.setsampwidth(2)
-        wf.setframerate(16000)
+        wf.setnchannels(1); wf.setsampwidth(2); wf.setframerate(16000)
         wf.writeframes(bytes(pcm))
     logger.info(f"Test tone WAV: {len(buf.getvalue())} bytes")
     return Response(content=buf.getvalue(), media_type="audio/wav")
 
-# ── Session Recording (HTTP-based, no WebSocket) ──
+
+@app.get("/api/audio/last_vad.wav")
+async def last_vad_wav():
+    if _last_vad_wav is None:
+        raise HTTPException(404, "No VAD recording available")
+    return Response(content=_last_vad_wav, media_type="audio/wav",
+                    headers={"X-Audio-Duration": str(len(_last_vad_wav) / (16000*2*2))})
+
+# ── Session Recording (HTTP-based) ──
 @app.post("/api/audio/record/start")
 async def record_start():
     global _session_active, _session_buffer
-
-    # Check if BLE connection is truly alive (notifications received recently)
-    ble_ok = ble_client.notifications_alive
-    if not ble_ok:
-        logger.warning(f"BLE not alive (connected={ble_client.is_connected}), attempting fresh connect...")
-        if ble_client.is_connected:
-            await ble_client.disconnect()
-        try:
-            await asyncio.wait_for(ble_client.connect(timeout=10.0), timeout=12.0)
-            ble_ok = True
-            logger.info("BLE connected for recording")
-        except asyncio.TimeoutError:
-            logger.error("BLE connect timed out during record start")
-        except Exception as e:
-            logger.error(f"BLE connect failed during record start: {e}")
-
     _session_active = True
     _session_buffer = bytearray()
-    logger.info(f"Recording started (BLE_alive={ble_ok})")
-    return {"status": "recording", "started": True, "ble_connected": ble_ok}
+    logger.info(f"Recording started")
+    return {"status": "recording", "started": True, "ble_connected": ble_client.notifications_alive}
 
 @app.post("/api/audio/record/stop")
 async def record_stop():
@@ -584,6 +695,53 @@ async def ws_sensors(websocket: WebSocket):
         sensor_websockets.discard(websocket)
 
 
+# ── AI Assistant Endpoints ──
+class AssistantQueryModel(BaseModel):
+    text: str
+
+
+@app.post("/api/assistant/parse")
+async def assistant_parse(body: AssistantQueryModel):
+    """Parse a spoken command into an action JSON."""
+    if not _assistant_enabled:
+        raise HTTPException(503, "Assistant not enabled. Restart with --assistant")
+    cmd = intent_parser.parse(body.text)
+    return cmd
+
+
+@app.post("/api/assistant/exec")
+async def assistant_exec(body: AssistantQueryModel):
+    """Parse + execute a spoken command in one call."""
+    if not _assistant_enabled:
+        raise HTTPException(503, "Assistant not enabled. Restart with --assistant")
+    cmd = intent_parser.parse(body.text)
+    result = await action_exec.execute(cmd)
+    return {"command": cmd, "result": result}
+
+
+@app.get("/api/assistant/status")
+async def assistant_status():
+    return {
+        "enabled": _assistant_enabled,
+        "active": _assistant_mode_active,
+        "ollama": ai_client.available,
+        "browser": browser_ctrl.available,
+        "model": intent_parser.model,
+    }
+
+
+@app.post("/api/assistant/toggle")
+async def assistant_toggle(body: dict = None):
+    global _assistant_mode_active
+    if not _assistant_enabled:
+        raise HTTPException(503, "Assistant not enabled. Restart with --assistant")
+    new_state = body.get("active", True) if body else not _assistant_mode_active
+    _assistant_mode_active = new_state
+    state = "activated" if new_state else "deactivated"
+    logger.info("Assistant mode %s", state)
+    return {"status": state, "active": _assistant_mode_active}
+
+
 def main():
     parser = argparse.ArgumentParser(description="Skynet AI Audio Bridge")
     parser.add_argument("--host", default="0.0.0.0", help="Bind address")
@@ -592,16 +750,34 @@ def main():
                         help="BLE device name to connect to")
     parser.add_argument("--model", default="small",
                         choices=["tiny", "base", "small", "medium", "large-v3"],
-                        help="Whisper model size for STT (default: small)")
+                        help="Whisper model size for STT")
     parser.add_argument("--stt-device", default="cpu",
                         choices=["cpu", "cuda", "auto"],
-                        help="Device for STT inference (default: cpu)")
+                        help="Device for STT inference")
+    parser.add_argument("--vad-threshold", type=int, default=5000,
+                        help="Minimum VAD threshold (adaptive, default: 5000)")
+    parser.add_argument("--vad-trigger", type=int, default=6,
+                        help="Consecutive frames above threshold to trigger recording (default: 6)")
+    parser.add_argument("--vad-silence", type=int, default=40,
+                        help="Consecutive frames below threshold to stop recording (default: 40)")
+    parser.add_argument("--assistant", action="store_true",
+                        help="Enable AI Assistant (Ollama + browser/PC control)")
+    parser.add_argument("--assistant-model", default="llama3:8b",
+                        help="Ollama model for intent parsing")
     args = parser.parse_args()
     ble_client.device_name = args.device
     if args.model:
         stt_engine.model_size = args.model
     if args.stt_device:
         stt_engine.device = args.stt_device
+    global VAD_TRIGGER, VAD_SILENCE_END, VAD_MIN_THRESHOLD, _assistant_enabled
+    VAD_MIN_THRESHOLD = args.vad_threshold
+    VAD_TRIGGER = args.vad_trigger
+    VAD_SILENCE_END = args.vad_silence
+    if args.assistant:
+        _assistant_enabled = True
+        intent_parser.model = args.assistant_model
+        logger.info("AI Assistant enabled (model: %s)", args.assistant_model)
     uvicorn.run(app, host=args.host, port=args.port)
 
 
