@@ -230,6 +230,31 @@
         .settings-actions { display: flex; gap: 12px; margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border); }
         .settings-actions button { flex: 1; padding: 10px; font-size: 0.8rem; }
         .contrast-value { min-width: 30px; text-align: center; font-family: 'JetBrains Mono'; font-size: 0.85rem; color: var(--primary); }
+
+        .backend-bar { display: flex; align-items: center; gap: 12px; padding: 12px 20px; background: var(--card); border-radius: 12px; border: 1px solid var(--border); flex-wrap: wrap; }
+        .backend-bar input { background: #0a0f14; border: 1px solid var(--border); border-radius: 6px; color: var(--text); padding: 8px 12px; font-family: 'JetBrains Mono'; font-size: 0.85rem; width: 100px; }
+        .backend-bar input:focus { border-color: var(--primary); outline: none; }
+        .backend-status { font-family: 'JetBrains Mono'; font-size: 0.75rem; color: var(--text-dim); }
+        .audio-controls { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+        .audio-controls button { padding: 8px 18px; font-size: 0.75rem; border-width: 1px; }
+        .gain-row { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
+        .gain-row input[type="range"] { flex: 1; accent-color: var(--primary); max-width: 200px; }
+        .gain-label { font-family: 'JetBrains Mono'; font-size: 0.85rem; color: var(--primary); min-width: 50px; text-align: right; }
+        .waveform-container { height: 80px; width: 100%; background: #010203; border: 1px solid #1a222b; border-radius: 8px; margin-bottom: 6px; overflow: hidden; }
+        .recording-duration { font-family: 'JetBrains Mono'; font-size: 0.75rem; color: var(--text-dim); }
+        .stt-output { background: #0a0f14; border: 1px solid var(--border); border-radius: 8px; padding: 12px; min-height: 80px; max-height: 150px; overflow-y: auto; font-family: 'JetBrains Mono'; font-size: 0.85rem; color: var(--text); margin-bottom: 8px; white-space: pre-wrap; }
+        .stt-output .partial { color: var(--text-dim); font-style: italic; }
+        .chat-container { display: flex; flex-direction: column; height: 250px; }
+        .chat-messages { flex: 1; overflow-y: auto; background: #0a0f14; border: 1px solid var(--border); border-radius: 8px; padding: 10px; margin-bottom: 8px; display: flex; flex-direction: column; gap: 8px; }
+        .chat-msg { font-size: 0.8rem; line-height: 1.4; padding: 6px 10px; border-radius: 8px; max-width: 85%; }
+        .chat-msg.user { background: rgba(0,242,255,0.1); border: 1px solid rgba(0,242,255,0.2); align-self: flex-end; color: var(--primary); }
+        .chat-msg.ai { background: rgba(40,167,69,0.1); border: 1px solid rgba(40,167,69,0.2); align-self: flex-start; color: var(--green); }
+        .chat-msg.system { background: rgba(255,204,0,0.1); border: 1px solid rgba(255,204,0,0.2); align-self: center; color: var(--audio); font-style: italic; font-size: 0.75rem; }
+        .chat-input-row { display: flex; gap: 8px; }
+        .chat-input-row input { flex: 1; background: #0a0f14; border: 1px solid var(--border); border-radius: 6px; color: var(--text); padding: 8px 12px; font-family: 'JetBrains Mono'; font-size: 0.85rem; }
+        .chat-input-row input:focus { border-color: var(--primary); outline: none; }
+        .chat-input-row button { padding: 8px 16px; font-size: 0.75rem; border-width: 1px; }
+
         @media (max-width: 480px) {
             .modal-panel { padding: 20px; width: 95%; }
             .setting-row { flex-direction: column; align-items: flex-start; gap: 8px; }
@@ -266,7 +291,7 @@
         </div>
 
         <div style="display: flex; flex-direction: column; align-items: center; gap: 10px;">
-            <button id="connect-btn">Initiate Tactical Uplink</button>
+            <button id="connect-btn">CONNECT TO nRF52</button>
             <button id="reset-btn" class="btn-danger" style="display: none;">DANGER: RESET TO BOOTLOADER</button>
             <button id="deepsleep-btn" class="btn-deepsleep" style="display: none;">💤 ACTIVATE DEEP SLEEP</button>
             <div id="reconnect-status" style="font-size: 0.7rem; color: var(--accent); min-height: 1.2em;"></div>
@@ -467,6 +492,7 @@
                     <span style="font-family:'JetBrains Mono';font-size:0.8rem;color:var(--text-dim);">nRF52840 BLE Sensor Hub v1.0</span>
                 </div>
             </div>
+
             <div class="settings-actions">
                 <button id="settings-save" style="background:var(--primary);color:var(--bg);border-color:var(--primary);">Save Settings</button>
                 <button id="settings-cancel">Cancel</button>
@@ -563,6 +589,59 @@
         </div>
     </div>
 
+    <div class="backend-bar">
+        <span style="font-size:0.75rem;text-transform:uppercase;letter-spacing:1.5px;color:var(--text-dim);">Audio Backend</span>
+        <input type="text" id="backend-host" value="localhost" placeholder="Host">
+        <input type="number" id="backend-port" value="8765" placeholder="Port" min="1" max="65535">
+        <button id="backend-connect-btn" style="padding:6px 16px;font-size:0.7rem;">Connect</button>
+        <span class="backend-status" id="backend-status">Disconnected</span>
+        <span style="width:1px;height:24px;background:var(--border);margin:0 4px;"></span>
+        <span style="font-size:0.75rem;text-transform:uppercase;letter-spacing:1.5px;color:var(--text-dim);">BLE</span>
+        <button id="ble-connect-btn" style="padding:6px 16px;font-size:0.7rem;border-color:var(--text-dim);color:var(--text-dim);" disabled>nRF52</button>
+        <button id="ble-scan-btn" class="btn-sm" style="display:none;border-color:var(--text-dim);color:var(--text-dim);" disabled>Scan</button>
+        <span class="backend-status" id="ble-status"><span style="color:var(--text-dim);">Offline</span></span>
+    </div>
+
+    <div class="stats-grid">
+        <div class="card">
+            <h2>Audio Recording</h2>
+            <div class="audio-controls">
+                <button id="rec-ctrl-btn" disabled>Record</button>
+                <button id="play-ctrl-btn" disabled>Play</button>
+                <button id="testtone-btn" style="padding:8px 14px;font-size:0.7rem;border-color:var(--text-dim);color:var(--text-dim);">Test Tone</button>
+            </div>
+            <audio id="audio-player" style="display:none" controls></audio>
+            <div class="gain-row">
+                <span style="font-size:0.75rem;color:var(--text-dim);">Gain:</span>
+                <input type="range" id="gain-slider" min="0.1" max="100" step="0.1" value="8.0">
+                <span class="gain-label" id="gain-label">8.0x</span>
+            </div>
+            <div class="waveform-container">
+                <canvas id="waveformCanvas"></canvas>
+            </div>
+            <div class="recording-duration" id="recording-duration">Duration: 00:00</div>
+        </div>
+        <div class="card">
+            <h2>Speech-to-Text</h2>
+            <div class="stt-output" id="stt-output"><span style="color:var(--text-dim);">Waiting for speech...</span></div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                <button id="stt-process-btn" class="btn-sm" style="border-color:var(--audio);color:var(--audio);">Process Audio</button>
+                <button id="stt-auto-btn" class="btn-sm" style="border-color:var(--green);color:var(--green);">Auto-STT</button>
+            </div>
+        </div>
+        <div class="card">
+            <h2>AI Assistant</h2>
+            <div class="chat-container">
+                <div class="chat-messages" id="chat-messages">
+                    <div class="chat-msg system">Connect to backend and start recording to use AI.</div>
+                </div>
+                <div class="chat-input-row">
+                    <input type="text" id="chat-input" placeholder="Ask AI anything..." disabled>
+                    <button id="chat-send-btn" disabled>Send</button>
+                </div>
+            </div>
+        </div>
+    </div>
 
     <div style="display: flex; justify-content: center; gap: 20px; padding: 20px;">
         <button onclick="exportCSV()">Export Tactical Session (CSV)</button>
@@ -1236,8 +1315,11 @@
         document.getElementById('reset-btn').onclick = async () => {
             if (confirm("System will enter UF2 Bootloader Mode. Current session will end. Proceed?")) {
                 try {
-                    const char = await service.getCharacteristic(RESET_CHAR);
-                    await char.writeValue(new Uint8Array([1]));
+                    await fetch(`${backendBaseUrl}/api/device/control`, {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({mode: 1})
+                    });
                 } catch (e) { console.error("Reset failed", e); }
             }
         };
@@ -1247,55 +1329,593 @@
 
     document.getElementById('connect-btn').addEventListener('click', async () => {
         const btn = document.getElementById('connect-btn');
-        if (btn.classList.contains('disconnect')) {
-            await disconnectDevice();
+        if (btn.innerText === 'DISCONNECT') {
+            await fetch(`${backendBaseUrl}/api/ble/disconnect`, {method:'POST'});
             return;
         }
+        btn.innerText = 'CONNECTING...';
+        btn.disabled = true;
+        try {
+            // First ensure backend is connected
+            if (!backendWs) {
+                const host = document.getElementById('backend-host').value || 'localhost';
+                const port = parseInt(document.getElementById('backend-port').value) || 8765;
+                await connectBackend(host, port);
+            }
+            // Connect BLE via backend
+            const resp = await fetch(`${backendBaseUrl}/api/ble/connect`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({name: 'Skynet AI Beacon'})
+            });
+            if (resp.ok) {
+                btn.innerText = 'DISCONNECT';
+                btn.style.borderColor = 'var(--accent)';
+                document.getElementById('status-text').innerText = 'UPLINK ACTIVE';
+                document.getElementById('tactical-header').classList.add('connected');
+                document.getElementById('bt-peer').innerText = 'Skynet AI Beacon';
+                document.getElementById('ble-status').innerHTML = '<span style="color:var(--primary);">Online</span>';
+                document.getElementById('reset-btn').style.display = 'block';
+                document.getElementById('deepsleep-btn').style.display = 'block';
+                // Start sensors WS
+                connectSensorsWS();
+                // Start PSD/waterfall render loop
+                startRenderLoop();
+            } else {
+                const err = await resp.json();
+                btn.innerText = 'CONNECT FAILED';
+                setTimeout(() => { btn.innerText = 'CONNECT TO nRF52'; btn.disabled = false; }, 3000);
+                document.getElementById('ble-status').innerHTML = `<span style="color:var(--accent);">${err.detail || 'Failed'}</span>`;
+            }
+        } catch(e) {
+            btn.innerText = 'CONNECT TO nRF52';
+            console.error('Connect error:', e);
+        }
+        btn.disabled = false;
+    });
+
+    // --- Backend Connection ---
+    let backendWs = null;
+    let backendBaseUrl = '';
+    let recordingTimerId = null;
+    let recordingStartTime = 0;
+    let audioQueue = [];
+    let autoConnectDone = false;
+
+    const waveformCanvas = document.getElementById('waveformCanvas');
+    const waveformCtx = waveformCanvas.getContext('2d');
+    const WAVEFORM_HEIGHT = 80;
+
+    function resizeWaveform() {
+        const parent = waveformCanvas.parentElement;
+        if (parent) {
+            const w = parent.clientWidth || 600;
+            waveformCanvas.width = w;
+            waveformCanvas.height = WAVEFORM_HEIGHT;
+        }
+    }
+    resizeWaveform();
+    const WAVEFORM_WIDTH = waveformCanvas.width;
+    const waveformData = new Float32Array(WAVEFORM_WIDTH);
+
+    function updateWaveform(samples) {
+        for (let i = 0; i < samples.length; i++) {
+            const val = Math.abs(samples[i]) / 32768;
+            const idx = Math.floor(i * WAVEFORM_WIDTH / samples.length);
+            if (idx < WAVEFORM_WIDTH) {
+                waveformData[idx] = Math.max(waveformData[idx], val);
+            }
+        }
+        if (samples.length > 0) {
+            waveformData.copyWithin(0, samples.length > WAVEFORM_WIDTH ? samples.length - WAVEFORM_WIDTH : 1);
+        }
+        drawWaveform();
+    }
+
+    function drawWaveform() {
+        waveformCtx.fillStyle = '#010203';
+        waveformCtx.fillRect(0, 0, WAVEFORM_WIDTH, WAVEFORM_HEIGHT);
+        waveformCtx.strokeStyle = '#00f2ff';
+        waveformCtx.lineWidth = 1.5;
+        waveformCtx.beginPath();
+        const mid = WAVEFORM_HEIGHT / 2;
+        for (let x = 0; x < WAVEFORM_WIDTH; x++) {
+            const amp = waveformData[x] * mid * 0.9;
+            const y = mid - amp;
+            x === 0 ? waveformCtx.moveTo(x, y) : waveformCtx.lineTo(x, y);
+        }
+        waveformCtx.stroke();
+    }
+
+    async function connectBackend(host, port) {
+        backendBaseUrl = `http://${host}:${port}`;
+        const wsUrl = `ws://${host}:${port}`;
+        const statusEl = document.getElementById('backend-status');
+        const connectBtn = document.getElementById('backend-connect-btn');
 
         try {
-            deepSleepActivated = false;
-            // SENIOR-DEV: Vor jedem neuen Scan ALLES nullen
-            if (bluetoothDevice && bluetoothDevice.gatt.connected) {
-                bluetoothDevice.gatt.disconnect();
+            const resp = await fetch(`${backendBaseUrl}/api/status`);
+            if (!resp.ok) throw new Error('Backend unreachable');
+            const data = await resp.json();
+
+            backendWs = new WebSocket(`${wsUrl}/ws/events`);
+            backendWs.onopen = () => {
+                statusEl.innerHTML = '<span style="color:var(--green);">Connected</span>';
+                connectBtn.innerText = 'Disconnect';
+                document.getElementById('rec-ctrl-btn').disabled = false;
+                document.getElementById('chat-input').disabled = false;
+                document.getElementById('chat-send-btn').disabled = false;
+                document.getElementById('gain-slider').disabled = false;
+                document.getElementById('ble-connect-btn').disabled = false;
+                document.getElementById('ble-scan-btn').style.display = 'inline-block';
+                document.getElementById('ble-scan-btn').disabled = false;
+                console.log('Backend connected');
+            };
+            backendWs.onmessage = (event) => {
+                try {
+                    const msg = JSON.parse(event.data);
+                    if (msg.type === 'status') {
+                    if (msg.data.notifications_alive) {
+                        document.getElementById('ble-status').innerHTML = '<span style="color:var(--primary);">Online</span>';
+                    } else if (msg.data.connected) {
+                        document.getElementById('ble-status').innerHTML = '<span style="color:var(--audio);">Connecting...</span>';
+                    } else {
+                        document.getElementById('ble-status').innerHTML = '<span style="color:var(--text-dim);">Offline</span>';
+                    }
+                    }
+                } catch (e) {}
+            };
+            backendWs.onclose = () => {
+                backendDisconnected();
+            };
+            backendWs.onerror = () => {
+                backendDisconnected();
+            };
+
+            if (data.gain !== undefined) {
+                document.getElementById('gain-slider').value = data.gain;
+                document.getElementById('gain-label').innerText = data.gain.toFixed(1) + 'x';
             }
-            bluetoothDevice = null;
-            bluetoothServer = null;
-            settingsService = null;
+        } catch (e) {
+            statusEl.innerHTML = '<span style="color:var(--accent);">Connection failed</span>';
+            console.error('Backend connect error:', e);
+        }
+    }
 
-            console.log("Senior-UI: Requesting fresh Bluetooth Device...");
-            bluetoothDevice = await navigator.bluetooth.requestDevice({
-                acceptAllDevices: true,
-                optionalServices: [SERVICE_UUID]
-            });
-            
-            bluetoothDevice.addEventListener('gattserverdisconnected', onDisconnected);
-            
-            deviceName = bluetoothDevice.name || 'SKYNET-UNIT-SENSE';
-            console.log("Senior-UI: Initiating GATT Handshake...");
-            bluetoothServer = await bluetoothDevice.gatt.connect();
-            
-            console.log("Senior-UI: Discovery of Primary Service...");
-            const service = await bluetoothServer.getPrimaryService(SERVICE_UUID);
-            window.currentBLEService = service;
-            settingsService = service;
-            
-            document.getElementById('tactical-header').classList.add('connected');
-            document.getElementById('status-text').innerText = 'UPLINK ACTIVE';
-            document.getElementById('bt-peer').innerText = deviceName;
-            
-            btn.innerText = 'Disconnect Tactical Uplink';
-            btn.classList.add('disconnect');
-            document.getElementById('reset-btn').style.display = 'block';
-            document.getElementById('deepsleep-btn').style.display = 'block';
+    function backendDisconnected() {
+        document.getElementById('backend-status').innerHTML = '<span style="color:var(--accent);">Disconnected</span>';
+        document.getElementById('backend-connect-btn').innerText = 'Connect';
+        document.getElementById('rec-ctrl-btn').disabled = true;
+        document.getElementById('play-ctrl-btn').disabled = true;
+        document.getElementById('chat-input').disabled = true;
+        document.getElementById('chat-send-btn').disabled = true;
+        document.getElementById('gain-slider').disabled = true;
+        document.getElementById('ble-connect-btn').disabled = true;
+        document.getElementById('ble-connect-btn').innerText = 'nRF52';
+        document.getElementById('ble-scan-btn').style.display = 'none';
+        document.getElementById('ble-scan-btn').disabled = true;
+        document.getElementById('ble-status').innerHTML = '<span style="color:var(--text-dim);">Offline</span>';
+        bleConnected = false;
+        if (recState === 'rec') recStop();
+        backendWs = null;
+    }
 
-            await startServicesAndRender(service);
-            document.getElementById('bt-peer').innerText = deviceName;
+    async function disconnectBackend() {
+        if (recState === 'rec') recStop();
+        if (backendWs) {
+            backendWs.close();
+            backendWs = null;
+        }
+        backendDisconnected();
+    }
 
-            // --- Auto-Hide PIN after successful connection ---
-            removePinDisplay();
-
-        } catch (err) { console.error("BLE Error:", err); }
+    document.getElementById('backend-connect-btn').addEventListener('click', () => {
+        const btn = document.getElementById('backend-connect-btn');
+        if (btn.innerText === 'Disconnect') {
+            disconnectBackend();
+            return;
+        }
+        const host = document.getElementById('backend-host').value || 'localhost';
+        const port = parseInt(document.getElementById('backend-port').value) || 8765;
+        connectBackend(host, port);
     });
+
+    document.getElementById('ble-connect-btn').addEventListener('click', async () => {
+        if (!backendWs) return;
+        const btn = document.getElementById('ble-connect-btn');
+        if (bleConnected) {
+            try {
+                await fetch(`${backendBaseUrl}/api/ble/disconnect`, {method: 'POST'});
+            } catch (e) {}
+            return;
+        }
+        btn.innerText = 'Connecting...';
+        btn.disabled = true;
+        try {
+            const resp = await fetch(`${backendBaseUrl}/api/ble/connect`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({name: 'Skynet AI Beacon'})
+            });
+            if (resp.ok) {
+                document.getElementById('ble-status').innerHTML = '<span style="color:var(--primary);">Online</span>';
+                btn.innerText = 'Disconnect BLE';
+                btn.style.borderColor = 'var(--accent)';
+                btn.style.color = 'var(--accent)';
+                bleConnected = true;
+            } else {
+                const err = await resp.json();
+                const detail = err.detail || err.message || 'Unknown error';
+                document.getElementById('ble-status').innerHTML = `<span style="color:var(--accent);">${detail}</span>`;
+                btn.innerText = 'Retry';
+                setTimeout(() => {
+                    btn.innerText = 'nRF52';
+                    btn.style.borderColor = 'var(--text-dim)';
+                    btn.style.color = 'var(--text-dim)';
+                }, 4000);
+            }
+        } catch (e) {
+            btn.innerText = 'nRF52';
+            console.error('BLE connect error:', e);
+        }
+        btn.disabled = false;
+    });
+
+    document.getElementById('ble-scan-btn').addEventListener('click', async () => {
+        if (!backendWs) return;
+        const btn = document.getElementById('ble-scan-btn');
+        const statusEl = document.getElementById('ble-status');
+        btn.disabled = true;
+        btn.innerText = 'Scanning...';
+        statusEl.innerHTML = '<span style="color:var(--audio);">Scanning for 8s...</span>';
+        try {
+            const resp = await fetch(`${backendBaseUrl}/api/ble/scan?timeout=8`);
+            if (!resp.ok) throw new Error('Scan failed');
+            const data = await resp.json();
+            const devs = data.devices || [];
+            if (devs.length === 0) {
+                statusEl.innerHTML = '<span style="color:var(--accent);">No BLE devices found</span>';
+            } else {
+                let html = devs.map(d =>
+                    `${d.name} (${d.rssi || '?'}dBm)`
+                ).join('<br>');
+                statusEl.innerHTML = `<span style="color:var(--green);font-size:0.65rem;">${html}</span>`;
+            }
+        } catch (e) {
+            statusEl.innerHTML = `<span style="color:var(--accent);">Scan error: ${e.message}</span>`;
+        }
+        btn.innerText = 'Scan';
+        btn.disabled = false;
+    });
+
+    document.getElementById('gain-slider').addEventListener('input', async () => {
+        const val = parseFloat(document.getElementById('gain-slider').value);
+        document.getElementById('gain-label').innerText = val.toFixed(1) + 'x';
+        try {
+            await fetch(`${backendBaseUrl}/api/gain`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({gain: val})
+            });
+        } catch (e) {
+            console.error('Set gain error:', e);
+        }
+    });
+
+    // ── Audio Recording & Playback (HTTP-based) ──
+    let recState = 'idle'; // idle | rec
+    let audioUrl = null;
+    let _liveWs = null;
+    let _livePkt = 0;
+
+    function fmtDur(sec) { const m=String(Math.floor(sec/60)).padStart(2,'0'); const s=String(Math.floor(sec%60)).padStart(2,'0'); return m+':'+s; }
+
+    async function recStart() {
+        if (recState !== 'idle' || !backendWs) return;
+        const r = await fetch(backendBaseUrl + '/api/audio/record/start', {method:'POST'});
+        if (!r.ok) { console.error('rec start failed'); return; }
+        const result = await r.json();
+        if (!result.ble_connected) {
+            console.error('BLE not connected! Recording will be empty.');
+            document.getElementById('recording-duration').innerText = '⚠ BLE not connected!';
+            return;
+        }
+        recState = 'rec'; recordingStartTime = Date.now();
+        document.getElementById('rec-ctrl-btn').innerText = 'Stop';
+        document.getElementById('rec-ctrl-btn').style.borderColor = 'var(--accent)';
+        document.getElementById('rec-ctrl-btn').style.color = 'var(--accent)';
+        document.getElementById('play-ctrl-btn').disabled = true;
+        recordingTimerId = setInterval(updateRecordingTimer, 500);
+        // Open live waveform WS
+        _livePkt = 0;
+        _liveWs = new WebSocket(backendBaseUrl.replace('http','ws') + '/ws/audio');
+        _liveWs.binaryType = 'arraybuffer';
+        _liveWs.onmessage = e => { _livePkt++; updateWaveform(new Int16Array(e.data)); };
+        _liveWs.onclose = () => console.log('Live WS closed');
+        console.log('Recording started');
+    }
+
+    async function recStop() {
+        if (recState !== 'rec') return;
+        recState = 'idle';
+        if (recordingTimerId) { clearInterval(recordingTimerId); recordingTimerId = null; }
+        if (_liveWs) { _liveWs.close(); _liveWs = null; }
+        document.getElementById('rec-ctrl-btn').innerText = 'Record';
+        document.getElementById('rec-ctrl-btn').style.borderColor = 'var(--primary)';
+        document.getElementById('rec-ctrl-btn').style.color = 'var(--primary)';
+
+        // Fetch WAV from server
+        const r = await fetch(backendBaseUrl + '/api/audio/record/stop', {method:'POST'});
+        if (!r.ok) { console.error('rec stop failed'); return; }
+        const wavBlob = await r.blob();
+        if (audioUrl) URL.revokeObjectURL(audioUrl);
+        audioUrl = URL.createObjectURL(wavBlob);
+        const player = document.getElementById('audio-player');
+        player.src = audioUrl;
+        player.style.display = 'block';
+        document.getElementById('play-ctrl-btn').disabled = false;
+        const dur = parseFloat(r.headers.get('X-Audio-Duration')) || 0;
+        document.getElementById('recording-duration').innerText = 'Duration: ' + fmtDur(dur);
+        console.log('Recording stopped: ' + fmtDur(dur));
+        drawTimeline(null, 0);
+    }
+
+    function recToggle() {
+        if (recState === 'rec') recStop();
+        else recStart();
+    }
+
+    function playAudio() {
+        const p = document.getElementById('audio-player');
+        if (p.paused) p.play();
+        else { p.pause(); p.currentTime = 0; }
+    }
+
+    function updateRecordingTimer() {
+        if (recState !== 'rec') return;
+        const elapsed = Math.floor((Date.now() - recordingStartTime) / 1000);
+        document.getElementById('recording-duration').innerText = 'Recording: ' + fmtDur(elapsed);
+    }
+
+    function drawTimeline(pcmInt16, progress) {
+        const w = waveformCanvas.width, h = waveformCanvas.height, mid = h/2;
+        waveformCtx.fillStyle = '#010203'; waveformCtx.fillRect(0,0,w,h);
+        if (!pcmInt16) { drawWaveform(); return; }
+        waveformCtx.strokeStyle = '#00ff99'; waveformCtx.lineWidth = 1.5; waveformCtx.beginPath();
+        const step = Math.max(1, Math.floor(pcmInt16.length / w));
+        for (let x = 0; x < w && x*step < pcmInt16.length; x++) {
+            const idx = x*step; let mx=0;
+            for (let s=0; s<step && idx+s<pcmInt16.length; s++) mx = Math.max(mx, Math.abs(pcmInt16[idx+s]));
+            const y = mid - (mx/32768)*mid*.9;
+            x===0 ? waveformCtx.moveTo(x,y) : waveformCtx.lineTo(x,y);
+        }
+        waveformCtx.stroke();
+    }
+
+    document.getElementById('rec-ctrl-btn').addEventListener('click', recToggle);
+    document.getElementById('play-ctrl-btn').addEventListener('click', playAudio);
+
+    // Test Tone (debug)
+    document.getElementById('testtone-btn').addEventListener('click', async () => {
+        if (!backendWs) return; const btn = document.getElementById('testtone-btn');
+        btn.disabled = true; btn.innerText = 'Loading...';
+        try {
+            const r = await fetch(backendBaseUrl + '/api/audio/testtone/raw');
+            if (!r.ok) throw new Error('fail');
+            const blob = await r.blob();
+            if (audioUrl) URL.revokeObjectURL(audioUrl);
+            audioUrl = URL.createObjectURL(blob);
+            const p = document.getElementById('audio-player');
+            p.src = audioUrl; p.style.display = 'block';
+            document.getElementById('play-ctrl-btn').disabled = false;
+            document.getElementById('recording-duration').innerText = 'Test tone: 2.0s @440Hz';
+            p.play();
+            console.log('Test tone playing');
+        } catch(e) { console.error('Test tone:', e); }
+        btn.innerText = 'Test Tone'; btn.disabled = false;
+    });
+
+    // ── Sensors WebSocket (IMU/Gyro/Battery via backend) ──
+    let sensorsWs = null;
+    function connectSensorsWS() {
+        if (sensorsWs) try { sensorsWs.close(); } catch(e) {}
+        const wsUrl = backendBaseUrl.replace('http', 'ws');
+        sensorsWs = new WebSocket(wsUrl + '/ws/sensors');
+        sensorsWs.onmessage = (event) => {
+            try {
+                const msg = JSON.parse(event.data);
+                const d = msg.data;
+                if (msg.type === 'accel') {
+                    document.getElementById('ax').innerText = d.x.toFixed(2);
+                    document.getElementById('ay').innerText = d.y.toFixed(2);
+                    document.getElementById('az').innerText = d.z.toFixed(2);
+                    if (charts && charts.accel) {
+                        [d.x, d.y, d.z].forEach((v, i) => { charts.accel.data.datasets[i].data.push(v); charts.accel.data.datasets[i].data.shift(); });
+                        charts.accel.update('none');
+                    }
+                } else if (msg.type === 'gyro') {
+                    document.getElementById('gx').innerText = d.x.toFixed(1);
+                    document.getElementById('gy').innerText = d.y.toFixed(1);
+                    document.getElementById('gz').innerText = d.z.toFixed(1);
+                    if (charts && charts.gyro) {
+                        [d.x, d.y, d.z].forEach((v, i) => { charts.gyro.data.datasets[i].data.push(v); charts.gyro.data.datasets[i].data.shift(); });
+                        charts.gyro.update('none');
+                    }
+                } else if (msg.type === 'audio_level') {
+                    const rms = d.rms / 1000.0;
+                    const zcr = d.zcr;
+                    let dbfs = 20 * Math.log10(rms || 0.0001);
+                    let dbspl = dbfs + 94 + 41;
+                    if (dbspl < 30) dbspl = 30;
+                    const freq_est = (zcr / 1024) * 8000;
+                    const fftData = new Float32Array(512);
+                    for (let i = 0; i < 512; i++) {
+                        const binFreq = (i * 16000 / 1024);
+                        let binValue = 30 + Math.random() * 5;
+                        if (dbspl > 40) {
+                            const I = (dbspl - 30);
+                            const dist = Math.abs(binFreq - freq_est);
+                            const W = 200 + (I * 10);
+                            binValue += Math.exp(-Math.pow(dist, 2) / (2 * Math.pow(W, 2))) * I;
+                            binValue += Math.exp(-Math.pow(Math.abs(binFreq - (freq_est * 2)), 2) / (2 * Math.pow(W/2, 2))) * (I * 0.4);
+                            binValue += Math.exp(-Math.pow(i - 10, 2) / 100) * (I * 0.3);
+                        }
+                        binValue += getAWeighting(binFreq || 1);
+                        psd_ema[i] = (ema_alpha * binValue) + ((1 - ema_alpha) * psd_ema[i]);
+                        fftData[i] = Math.max(30, Math.min(120, psd_ema[i]));
+                    }
+                    lastPsdData = new Float32Array(fftData);
+                } else if (msg.type === 'battery') {
+                    document.getElementById('batt-volt').innerText = (d.voltage_mv / 1000).toFixed(2);
+                    document.getElementById('batt-soc').innerText = d.soc + '%';
+                    const badge = document.getElementById('batt-usb');
+                    if (d.status === 1) { badge.style.display='inline-block'; badge.innerText='CHARGING'; badge.style.background='var(--accent)'; }
+                    else if (d.status === 2) { badge.style.display='inline-block'; badge.innerText='USB POWER'; badge.style.background='var(--green)'; }
+                    else { badge.style.display='inline-block'; badge.innerText='BATTERY'; badge.style.background='var(--low)'; }
+                    document.getElementById('batt-volt').style.color = d.soc > 50 ? 'var(--green)' : d.soc > 20 ? 'var(--high)' : 'var(--accent)';
+                } else if (msg.type === 'tx_power') {
+                    document.getElementById('rssi-val').innerText = d.dbm;
+                    document.getElementById('tx-mw').innerText = Math.pow(10, d.dbm / 10).toFixed(2);
+                    document.getElementById('tx-pcnt').innerText = Math.round(((d.dbm + 40) / 48) * 100);
+                    const txs = document.getElementById('tx-status');
+                    if (d.dbm >= 4) { txs.innerText = 'HIGH POWER'; txs.style.color = 'var(--primary)'; }
+                    else if (d.dbm >= -4) { txs.innerText = 'BALANCED'; txs.style.color = 'var(--mid)'; }
+                    else { txs.innerText = 'POWER SAVE'; txs.style.color = 'var(--accent)'; }
+                }
+            } catch(e) {}
+        };
+        sensorsWs.onclose = () => { sensorsWs = null; };
+        sensorsWs.onerror = () => { sensorsWs = null; };
+    }
+
+    // --- STT ---
+    let sttWs = null;
+
+    async function startSTT() {
+        if (!backendWs) return;
+        const wsUrl = backendBaseUrl.replace('http', 'ws');
+        sttWs = new WebSocket(`${wsUrl}/ws/stt`);
+
+        sttWs.onmessage = (event) => {
+            try {
+                const msg = JSON.parse(event.data);
+                const output = document.getElementById('stt-output');
+                if (msg.type === 'result') {
+                    const p = document.createElement('div');
+                    p.textContent = msg.text;
+                    output.innerHTML = '';
+                    output.appendChild(p);
+                } else if (msg.type === 'partial') {
+                    const existing = output.querySelector('.partial');
+                    if (existing) existing.textContent = msg.text;
+                    else {
+                        const p = document.createElement('div');
+                        p.className = 'partial';
+                        p.textContent = msg.text;
+                        output.appendChild(p);
+                    }
+                }
+            } catch (e) {}
+        };
+
+        try {
+            await fetch(`${backendBaseUrl}/api/stt/start`, {method: 'POST'});
+            document.getElementById('stt-auto-btn').innerText = 'Stop STT';
+            document.getElementById('stt-auto-btn').style.borderColor = 'var(--accent)';
+            document.getElementById('stt-auto-btn').style.color = 'var(--accent)';
+        } catch (e) {
+            console.error('STT start error:', e);
+        }
+    }
+
+    async function stopSTT() {
+        if (sttWs) { sttWs.close(); sttWs = null; }
+        try {
+            await fetch(`${backendBaseUrl}/api/stt/stop`, {method: 'POST'});
+        } catch (e) {}
+        document.getElementById('stt-auto-btn').innerText = 'Auto-STT';
+        document.getElementById('stt-auto-btn').style.borderColor = 'var(--green)';
+        document.getElementById('stt-auto-btn').style.color = 'var(--green)';
+    }
+
+    document.getElementById('stt-auto-btn').addEventListener('click', () => {
+        const btn = document.getElementById('stt-auto-btn');
+        if (btn.innerText === 'Auto-STT' || btn.innerText === 'Process Audio') {
+            startSTT();
+        } else {
+            stopSTT();
+        }
+    });
+
+    document.getElementById('stt-process-btn').addEventListener('click', async () => {
+        if (!backendWs) return;
+        try {
+            const resp = await fetch(`${backendBaseUrl}/api/stt/process`, {method: 'POST'});
+            if (!resp.ok) throw new Error('Process failed');
+            const data = await resp.json();
+            const output = document.getElementById('stt-output');
+            output.innerHTML = '';
+            const p = document.createElement('div');
+            p.textContent = data.text || '(no speech detected)';
+            output.appendChild(p);
+        } catch (e) {
+            console.error('STT process error:', e);
+        }
+    });
+
+    // --- AI Assistant ---
+    function addChatMessage(text, role) {
+        const container = document.getElementById('chat-messages');
+        const div = document.createElement('div');
+        div.className = 'chat-msg ' + role;
+        div.textContent = text;
+        container.appendChild(div);
+        container.scrollTop = container.scrollHeight;
+    }
+
+    document.getElementById('chat-send-btn').addEventListener('click', async () => {
+        const input = document.getElementById('chat-input');
+        const text = input.value.trim();
+        if (!text || !backendWs) return;
+        input.value = '';
+        addChatMessage(text, 'user');
+
+        try {
+            const resp = await fetch(`${backendBaseUrl}/api/ai/query`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({text: text})
+            });
+            if (!resp.ok) throw new Error('AI query failed');
+            const data = await resp.json();
+            addChatMessage(data.response, 'ai');
+        } catch (e) {
+            addChatMessage('AI query failed: ' + e.message, 'system');
+        }
+    });
+
+    document.getElementById('chat-input').addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') document.getElementById('chat-send-btn').click();
+    });
+
+    window.addEventListener('resize', () => {
+        resizeWaveform();
+        drawWaveform();
+    });
+
+    // Auto-connect to backend on page load (same origin, default port 8765)
+    (async function autoInit() {
+        const host = window.location.hostname || 'localhost';
+        const port = window.location.port || '8765';
+        const backendHost = document.getElementById('backend-host');
+        const backendPort = document.getElementById('backend-port');
+        if (backendHost) backendHost.value = host;
+        if (backendPort) backendPort.value = port;
+
+        if (host === 'localhost' || host === '127.0.0.1') {
+            await connectBackend(host, parseInt(port));
+        }
+    })();
 
 </script>
 </body>

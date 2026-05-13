@@ -26,6 +26,7 @@
 #include "font8x8.h"
 #include "font8x16.h"
 #include "qrcodegen.h"
+#include "audio_stream.h"
 
 /* --- Hardware Definitions --- */
 #define LED0_NODE DT_ALIAS(led0)
@@ -59,12 +60,14 @@ static const struct adc_dt_spec adc_channel = ADC_DT_SPEC_GET_BY_IDX(DT_PATH(zep
 #define BT_UUID_TX_POWER_CHRC_VAL  BT_UUID_128_ENCODE(0x12345678, 0x1234, 0x5678, 0x1234, 0x56789abcdef4)
 #define BT_UUID_BATTERY_CHRC_VAL   BT_UUID_128_ENCODE(0x12345678, 0x1234, 0x5678, 0x1234, 0x56789abcdef5)
 #define BT_UUID_RESET_CHRC_VAL     BT_UUID_128_ENCODE(0x12345678, 0x1234, 0x5678, 0x1234, 0x56789abcdef6)
+#define BT_UUID_AUDIO_STREAM_CHRC_VAL BT_UUID_128_ENCODE(0x12345678, 0x1234, 0x5678, 0x1234, 0x56789abcdef8)
 #define BT_UUID_OLED_SETTINGS_CHRC_VAL BT_UUID_128_ENCODE(0x12345678, 0x1234, 0x5678, 0x1234, 0x56789abcdef7)
 
 #define BT_UUID_CUSTOM_SERVICE  BT_UUID_DECLARE_128(BT_UUID_CUSTOM_SERVICE_VAL)
 #define BT_UUID_ACCEL_CHRC      BT_UUID_DECLARE_128(BT_UUID_ACCEL_CHRC_VAL)
 #define BT_UUID_GYRO_CHRC       BT_UUID_DECLARE_128(BT_UUID_GYRO_CHRC_VAL)
 #define BT_UUID_AUDIO_CHRC      BT_UUID_DECLARE_128(BT_UUID_AUDIO_CHRC_VAL)
+#define BT_UUID_AUDIO_STREAM_CHRC BT_UUID_DECLARE_128(BT_UUID_AUDIO_STREAM_CHRC_VAL)
 #define BT_UUID_TX_POWER_CHRC   BT_UUID_DECLARE_128(BT_UUID_TX_POWER_CHRC_VAL)
 #define BT_UUID_BATTERY_CHRC    BT_UUID_DECLARE_128(BT_UUID_BATTERY_CHRC_VAL)
 #define BT_UUID_RESET_CHRC      BT_UUID_DECLARE_128(BT_UUID_RESET_CHRC_VAL)
@@ -76,10 +79,11 @@ enum {
 	IDX_ACCEL_VAL = 2,
 	IDX_GYRO_VAL = 5,
 	IDX_AUDIO_VAL = 8,
-	IDX_TX_POWER_VAL = 11,
-	IDX_BATTERY_VAL = 14,
-	IDX_RESET_VAL = 17,
-	IDX_OLED_SETTINGS_VAL = 19,
+	IDX_AUDIO_STREAM_VAL = 11,
+	IDX_TX_POWER_VAL = 14,
+	IDX_BATTERY_VAL = 17,
+	IDX_RESET_VAL = 20,
+	IDX_OLED_SETTINGS_VAL = 22,
 };
 
 /* Data structures for BLE transmission */
@@ -97,22 +101,7 @@ static uint8_t audio_level_buf[8]; /* uint32_t RMS + uint32_t ZCR */
 static int8_t tx_power_level = 0; /* Default start value */
 static struct batt_data_t battery_status = {0};
 
-/* OLED Settings (read/write via GATT) */
-struct oled_settings {
-	uint8_t beacon_dwell_s;
-	uint8_t qr_dwell_s;
-	uint8_t imu_dwell_s;
-	uint8_t mic_dwell_s;
-	uint8_t view_override;       /* 0=auto, 1=dashboard, 2=mic */
-	uint8_t qr_enable;
-	uint8_t contrast;
-	uint8_t invert;
-	uint8_t display_sleep_min;   /* 0=never */
-	uint8_t led_enable;          /* 0=off, 1=on */
-	uint8_t deepsleep_enable;    /* 0=off(default), 1=on */
-	uint8_t deepsleep_interval;  /* 0=10s, 1=1min, 2=10min, 3=1h, 4=10h, 5=24h */
-	uint8_t deepsleep_oled;      /* 0=off, 1=standby */
-} __packed;
+/* OLED Settings struct defined in audio_stream.h */
 
 static struct oled_settings oled_settings = {
 	.beacon_dwell_s = 2,
@@ -428,6 +417,8 @@ BT_GATT_SERVICE_DEFINE(custom_svc,
 	BT_GATT_CCC(ccc_cfg_changed, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
 	BT_GATT_CHARACTERISTIC(BT_UUID_AUDIO_CHRC, BT_GATT_CHRC_NOTIFY, BT_GATT_PERM_READ, NULL, NULL, NULL),
 	BT_GATT_CCC(ccc_cfg_changed, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
+	BT_GATT_CHARACTERISTIC(BT_UUID_AUDIO_STREAM_CHRC, BT_GATT_CHRC_NOTIFY, BT_GATT_PERM_READ, NULL, NULL, NULL),
+	BT_GATT_CCC(ccc_cfg_changed, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
 	BT_GATT_CHARACTERISTIC(BT_UUID_TX_POWER_CHRC, BT_GATT_CHRC_READ | BT_GATT_CHRC_NOTIFY, BT_GATT_PERM_READ, read_tx_power, NULL, NULL),
 	BT_GATT_CCC(ccc_cfg_changed, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
 	BT_GATT_CHARACTERISTIC(BT_UUID_BATTERY_CHRC, BT_GATT_CHRC_READ | BT_GATT_CHRC_NOTIFY, BT_GATT_PERM_READ, read_battery, NULL, NULL),
@@ -485,19 +476,30 @@ static void read_battery_voltage_impl(void)
 		
 		/* 4. Kalibrierung anwenden */
 		val_mv = (int32_t)((float)val_mv * calibration_factor);
-		
-		/* 5. SMA Filter (Langzeit-Glättung) */
-		adc_history[filter_idx] = val_mv;
-		filter_idx = (filter_idx + 1) % FILTER_SIZE;
-		if (filter_idx == 0) filter_full = true;
-		
-		int32_t sum = 0;
-		int count = filter_full ? FILTER_SIZE : filter_idx;
-		for (int i = 0; i < count; i++) {
-			sum += adc_history[i];
+
+		int32_t old_val = (int32_t)battery_status.voltage_mv;
+
+		/* 5. Bei erstmaligem oder großem Sprung (>500mV) SMA-Filter sofort füllen */
+		if (old_val == 0 || abs(val_mv - old_val) > 500) {
+			for (int i = 0; i < FILTER_SIZE; i++) {
+				adc_history[i] = val_mv;
+			}
+			filter_idx = 0;
+			filter_full = true;
+		} else {
+			/* SMA Filter (Langzeit-Glättung) */
+			adc_history[filter_idx] = val_mv;
+			filter_idx = (filter_idx + 1) % FILTER_SIZE;
+			if (filter_idx == 0) filter_full = true;
+
+			int32_t sum = 0;
+			int count = filter_full ? FILTER_SIZE : filter_idx;
+			for (int i = 0; i < count; i++) {
+				sum += adc_history[i];
+			}
+			val_mv = sum / count;
 		}
-		val_mv = sum / count;
-		
+
 		battery_status.voltage_mv = (uint16_t)val_mv;
 
 		/* SoC Logic: 3.3V to 4.15V LiPo range */
@@ -584,19 +586,26 @@ static struct bt_conn_cb conn_callbacks_phy = {
 
 static void start_advertising(void)
 {
+	int err;
+
+	err = bt_le_adv_stop();
+	if (err < 0 && err != -EALREADY) {
+		printk("Adv stop err: %d\n", err);
+	}
+
+	k_sleep(K_MSEC(50));
+
 	struct bt_le_adv_param adv_param = {
 		.id = BT_ID_DEFAULT,
 		.sid = 0,
-		.options = (1UL << 0) | (1UL << 2), /* BT_LE_ADV_OPT_CONNECTABLE | BT_LE_ADV_OPT_USE_NAME */
+		.options = BT_LE_ADV_OPT_CONN,
 		.interval_min = BT_GAP_ADV_FAST_INT_MIN_2,
 		.interval_max = BT_GAP_ADV_FAST_INT_MAX_2,
 	};
 
-	int err = bt_le_adv_start(&adv_param, ad, ARRAY_SIZE(ad), sd, ARRAY_SIZE(sd));
+	err = bt_le_adv_start(&adv_param, ad, ARRAY_SIZE(ad), sd, ARRAY_SIZE(sd));
 	if (err) {
-		if (err != -EALREADY) {
-			printk("Advertising failed to start (err %d)\n", err);
-		}
+		printk("Advertising failed to start (err %d)\n", err);
 	} else {
 		printk("Advertising started. Skynet Beacon is visible.\n");
 	}
@@ -649,15 +658,10 @@ static void bt_ready_init(void)
 
 static int32_t my_sensor_value_to_milli(const struct sensor_value *val) { return (val->val1 * 1000) + (val->val2 / 1000); }
 
-/* --- Audio Thread --- */
-#define AUDIO_SAMPLE_RATE 16000
-#define AUDIO_SAMPLES_PER_BLOCK 512
-#define AUDIO_BLOCK_SIZE (AUDIO_SAMPLES_PER_BLOCK * sizeof(int16_t))
-K_MEM_SLAB_DEFINE(audio_mem_slab, AUDIO_BLOCK_SIZE, 24, 4);
+/* --- Audio Streaming --- */
+K_MEM_SLAB_DEFINE(audio_mem_slab, 1024, 24, 4);
 
-static struct k_thread audio_thread_data;
 static struct k_thread sensor_thread_data;
-K_THREAD_STACK_DEFINE(audio_stack, 2048);
 K_THREAD_STACK_DEFINE(sensor_stack, 2048);
 
 /* Deepsleep: OLED-only cycling, threads keep running for BLE stability */
@@ -713,129 +717,6 @@ static void wake_from_deep_sleep(void)
 	k_work_reschedule_for_queue(&oled_work_q, &oled_work, K_NO_WAIT);
 	k_wakeup(main_thread_id);
 	printk("WAKE FROM DEEP SLEEP completed\n");
-}
-
-static void audio_thread(void *p1, void *p2, void *p3)
-{
-	void *buffer;
-	size_t size;
-	int ret;
-	uint32_t val_u32;
-
-	if (device_is_ready(gpio1_dev)) {
-		gpio_pin_configure(gpio1_dev, SENSE_PWR_PIN, GPIO_OUTPUT_HIGH);
-		gpio_pin_set(gpio1_dev, SENSE_PWR_PIN, 1);
-		k_msleep(100);
-	} else {
-		printk("AUDIO: gpio1_dev not ready\n");
-	}
-
-	if (!device_is_ready(mic_dev)) {
-		printk("AUDIO: mic_dev not ready\n");
-		return;
-	}
-
-	struct pcm_stream_cfg stream_cfg = {
-		.pcm_rate = AUDIO_SAMPLE_RATE,
-		.pcm_width = 16,
-		.block_size = AUDIO_BLOCK_SIZE,
-		.mem_slab = &audio_mem_slab,
-	};
-
-	struct dmic_cfg cfg;
-	memset(&cfg, 0, sizeof(cfg));
-	cfg.io.min_pdm_clk_freq = 1000000;
-	cfg.io.max_pdm_clk_freq = 3200000;
-	cfg.streams = &stream_cfg;
-	cfg.channel.req_chan_map_lo = dmic_build_channel_map(0, 0, PDM_CHAN_LEFT);
-	cfg.channel.req_num_chan = 1;
-	cfg.channel.req_num_streams = 1;
-
-	if (dmic_configure(mic_dev, &cfg) < 0) {
-		printk("AUDIO: dmic_configure failed\n");
-		return;
-	}
-	if (dmic_trigger(mic_dev, DMIC_TRIGGER_START) < 0) {
-		printk("AUDIO: dmic_trigger failed\n");
-		return;
-	}
-	printk("AUDIO: PDM started, waiting for samples\n");
-
-	while (1) {
-		ret = dmic_read(mic_dev, 0, &buffer, &size, SYS_FOREVER_MS);
-		if (ret != 0) {
-			printk("DMIC Read Error: %d\n", ret);
-			k_msleep(10);
-			continue;
-		}
-		
-		if (ret == 0) {
-			int16_t *samples = (int16_t *)buffer;
-			uint32_t count = size / sizeof(int16_t);
-			
-			double sum_sq = 0;
-			uint32_t zero_crossings = 0;
-			int16_t last_sample = 0;
-
-			for (uint32_t i = 0; i < count; i++) {
-				/* RMS Calculation */
-				double val = (double)samples[i] / 32768.0;
-				sum_sq += val * val;
-
-				/* Zero-Crossing Rate (ZCR) Calculation */
-				/* Check if the sign changed compared to the last sample, ignore exactly 0 to avoid noise jitter */
-				if (i > 0) {
-					if ((samples[i] > 0 && last_sample < 0) || (samples[i] < 0 && last_sample > 0)) {
-						zero_crossings++;
-					}
-				}
-				last_sample = samples[i];
-			}
-			
-			double rms = sqrt(sum_sq / (double)count);
-			
-			/* Pack data for BLE: [4 bytes RMS] [4 bytes ZCR] */
-			val_u32 = (uint32_t)(rms * 1000.0);
-			sys_put_le32(val_u32, &audio_level_buf[0]);
-			sys_put_le32(zero_crossings, &audio_level_buf[4]);
-			
-			/* RGB LED Audio Logic (Highly Smoothed for Fade-out effect) */
-			static double smoothed_rms = 0.0;
-			const double decay_factor = 0.885; /* Very slow fade-out */
-			const double attack_factor = 0.12; /* Smoother build-up */
-
-			if (rms > smoothed_rms) {
-				smoothed_rms = (attack_factor * rms) + ((1.0 - attack_factor) * smoothed_rms);
-			} else {
-				smoothed_rms *= decay_factor;
-			}
-
-			if (oled_settings.led_enable && gpio_is_ready_dt(&led_red_spec) && gpio_is_ready_dt(&led_green_spec) && gpio_is_ready_dt(&led_blue_spec)) {
-				if (smoothed_rms < 0.004) { /* Silence */
-					gpio_pin_set_dt(&led_red_spec, 0); gpio_pin_set_dt(&led_green_spec, 0); gpio_pin_set_dt(&led_blue_spec, 0);
-				} else if (smoothed_rms < 0.012) { /* Low: Cyan/Blue */
-					gpio_pin_set_dt(&led_red_spec, 0); gpio_pin_set_dt(&led_green_spec, 1); gpio_pin_set_dt(&led_blue_spec, 1);
-				} else if (smoothed_rms < 0.025) { /* Mid: Green */
-					gpio_pin_set_dt(&led_red_spec, 0); gpio_pin_set_dt(&led_green_spec, 1); gpio_pin_set_dt(&led_blue_spec, 0);
-				} else if (smoothed_rms < 0.045) { /* High: Yellow */
-					gpio_pin_set_dt(&led_red_spec, 1); gpio_pin_set_dt(&led_green_spec, 1); gpio_pin_set_dt(&led_blue_spec, 0);
-				} else { /* Peak: Red */
-					gpio_pin_set_dt(&led_red_spec, 1); gpio_pin_set_dt(&led_green_spec, 0); gpio_pin_set_dt(&led_blue_spec, 0);
-				}
-			}
-
-			if (deepsleep_send_once_audio) {
-				deepsleep_send_once_audio = false;
-				bt_gatt_notify(NULL, &custom_svc.attrs[IDX_AUDIO_VAL], audio_level_buf, sizeof(audio_level_buf));
-			} else if (bt_connected_flag && !deepsleep_block_notify) {
-				bt_gatt_notify(NULL, &custom_svc.attrs[IDX_AUDIO_VAL], audio_level_buf, sizeof(audio_level_buf));
-			}
-			k_mem_slab_free(&audio_mem_slab, buffer);
-			if (k_uptime_get_32() % 1000 < 50) {
-				printk("Mic RMS: %u\n", val_u32);
-			}
-		}
-	}
 }
 
 static void sensor_thread(void *p1, void *p2, void *p3)
@@ -1335,7 +1216,27 @@ int main(void) {
 	k_work_init(&adv_start_work, adv_start_handler);
 
 	bt_ready_init();
-	k_thread_create(&audio_thread_data, audio_stack, K_THREAD_STACK_SIZEOF(audio_stack), audio_thread, NULL, NULL, NULL, 2, K_FP_REGS, K_NO_WAIT);
+
+	{
+		static const struct audio_stream_config stream_cfg = {
+			.mic_dev = DEVICE_DT_GET(DT_ALIAS(mic)),
+			.gpio1_dev = DEVICE_DT_GET(DT_NODELABEL(gpio1)),
+			.led_red = &led_red_spec,
+			.led_green = &led_green_spec,
+			.led_blue = &led_blue_spec,
+			.audio_level_buf = audio_level_buf,
+			.mem_slab = &audio_mem_slab,
+			.gatt_attrs = custom_svc.attrs,
+			.audio_val_idx = IDX_AUDIO_VAL,
+			.audio_stream_val_idx = IDX_AUDIO_STREAM_VAL,
+			.bt_connected = &bt_connected_flag,
+			.deepsleep_block_notify = &deepsleep_block_notify,
+			.deepsleep_send_once_audio = &deepsleep_send_once_audio,
+			.oled_settings = &oled_settings,
+		};
+		audio_stream_start(&stream_cfg);
+	}
+
 	k_thread_create(&sensor_thread_data, sensor_stack, K_THREAD_STACK_SIZEOF(sensor_stack), sensor_thread, NULL, NULL, NULL, 3, K_FP_REGS, K_NO_WAIT);
 
 	/* Initialize and start periodic battery monitoring */
