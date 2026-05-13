@@ -8,7 +8,7 @@ import time
 from contextlib import asynccontextmanager
 
 import uvicorn
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel
@@ -23,10 +23,12 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("server")
 
 SAMPLE_RATE = 16000
+_here = os.path.dirname(os.path.abspath(__file__))
+_project_root = os.path.dirname(_here)
 
 ble_client = BLEClient()
 audio_buffer = AudioRingBuffer(max_duration_s=60)
-stt_engine = STTEngine()
+stt_engine = STTEngine(model_size="small", device="cpu", compute_type="int8", lang="de")
 ai_client = AIClient()
 
 _loop = None
@@ -181,10 +183,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-_here = os.path.dirname(os.path.abspath(__file__))
-_project_root = os.path.dirname(_here)
-
 
 @app.get("/")
 async def serve_index():
@@ -362,6 +360,26 @@ async def stt_process():
     text = stt_engine.process_file(data)
     logger.info(f"STT batch result: {text}")
     return {"text": text}
+
+
+@app.post("/api/stt/transcribe")
+async def stt_transcribe(file: UploadFile = File(...)):
+    import io, wave
+    content = await file.read()
+    logger.info(f"STT transcribe: {len(content)} bytes from {file.filename}")
+    try:
+        with wave.open(io.BytesIO(content), 'rb') as wf:
+            if wf.getnchannels() != 1 or wf.getsampwidth() != 2:
+                raise HTTPException(400, f"Expected mono 16-bit WAV, got {wf.getnchannels()}ch {wf.getsampwidth()*8}bit")
+            if wf.getframerate() != 16000:
+                logger.warning(f"Sample rate {wf.getframerate()}Hz, resampling not implemented")
+            pcm = wf.readframes(wf.getnframes())
+        logger.info(f"STT transcribe: {len(pcm)} bytes PCM")
+        text = stt_engine.process_file(pcm)
+        logger.info(f"STT result: {text}")
+        return {"text": text}
+    except wave.Error as e:
+        raise HTTPException(400, f"Invalid WAV: {e}")
 
 
 @app.post("/api/ai/query")
@@ -561,8 +579,18 @@ def main():
     parser.add_argument("--port", type=int, default=8765, help="Bind port")
     parser.add_argument("--device", default="Skynet AI Beacon",
                         help="BLE device name to connect to")
+    parser.add_argument("--model", default="small",
+                        choices=["tiny", "base", "small", "medium", "large-v3"],
+                        help="Whisper model size for STT (default: small)")
+    parser.add_argument("--stt-device", default="cpu",
+                        choices=["cpu", "cuda", "auto"],
+                        help="Device for STT inference (default: cpu)")
     args = parser.parse_args()
     ble_client.device_name = args.device
+    if args.model:
+        stt_engine.model_size = args.model
+    if args.stt_device:
+        stt_engine.device = args.stt_device
     uvicorn.run(app, host=args.host, port=args.port)
 
 

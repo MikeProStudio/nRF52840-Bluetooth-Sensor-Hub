@@ -1648,6 +1648,7 @@
         const r = await fetch(backendBaseUrl + '/api/audio/record/stop', {method:'POST'});
         if (!r.ok) { console.error('rec stop failed'); return; }
         const wavBlob = await r.blob();
+        window._lastWavBlob = wavBlob;
         if (audioUrl) URL.revokeObjectURL(audioUrl);
         audioUrl = URL.createObjectURL(wavBlob);
         const player = document.getElementById('audio-player');
@@ -1703,6 +1704,7 @@
             const r = await fetch(backendBaseUrl + '/api/audio/testtone/raw');
             if (!r.ok) throw new Error('fail');
             const blob = await r.blob();
+            window._lastWavBlob = blob;
             if (audioUrl) URL.revokeObjectURL(audioUrl);
             audioUrl = URL.createObjectURL(blob);
             const p = document.getElementById('audio-player');
@@ -1849,18 +1851,42 @@
 
     document.getElementById('stt-process-btn').addEventListener('click', async () => {
         if (!backendWs) return;
+        const btn = document.getElementById('stt-process-btn');
+        const output = document.getElementById('stt-output');
+        const blob = window._lastWavBlob;
+        if (!blob) {
+            output.innerHTML = '<span style="color:var(--accent);">No recording available. Record audio first.</span>';
+            return;
+        }
+        btn.disabled = true;
+        btn.innerText = 'Transcribing...';
+        output.innerHTML = '<span style="color:var(--text-dim);">Processing speech...</span>';
         try {
-            const resp = await fetch(`${backendBaseUrl}/api/stt/process`, {method: 'POST'});
-            if (!resp.ok) throw new Error('Process failed');
+            const form = new FormData();
+            form.append('file', blob, 'recording.wav');
+            const resp = await fetch(`${backendBaseUrl}/api/stt/transcribe`, {
+                method: 'POST',
+                body: form
+            });
+            if (!resp.ok) {
+                const err = await resp.json();
+                throw new Error(err.detail || 'Transcribe failed');
+            }
             const data = await resp.json();
-            const output = document.getElementById('stt-output');
+            const text = data.text || '(no speech detected)';
             output.innerHTML = '';
             const p = document.createElement('div');
-            p.textContent = data.text || '(no speech detected)';
+            p.style.fontSize = '0.9rem';
+            p.style.lineHeight = '1.5';
+            p.textContent = text;
             output.appendChild(p);
+            console.log('STT result:', text);
         } catch (e) {
-            console.error('STT process error:', e);
+            output.innerHTML = `<span style="color:var(--accent);">Error: ${e.message}</span>`;
+            console.error('STT transcribe error:', e);
         }
+        btn.innerText = 'Process Audio';
+        btn.disabled = false;
     });
 
     // --- AI Assistant ---
