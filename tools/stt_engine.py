@@ -12,11 +12,10 @@ try:
     _whisper_available = True
 except ImportError:
     _whisper_available = False
-    logger.warning("faster-whisper not installed. Install: pip install faster-whisper")
+    logger.warning("faster-whisper not installed")
 
 
-def _pcm_to_wav_bytes(pcm_data: bytes, sample_rate: int = 16000) -> bytes:
-    """Convert raw PCM16 mono to WAV bytes for Whisper."""
+def _pcm_to_wav_bytes(pcm_data, sample_rate=16000):
     buf = io.BytesIO()
     with wave.open(buf, "wb") as w:
         w.setnchannels(1)
@@ -27,18 +26,15 @@ def _pcm_to_wav_bytes(pcm_data: bytes, sample_rate: int = 16000) -> bytes:
 
 
 class STTEngine:
-    def __init__(self, model_size="small", device="auto", compute_type="default", lang="de"):
-        """
-        model_size: "tiny" | "base" | "small" | "medium" | "large-v3"
-        device: "cpu" | "cuda" | "auto"
-        compute_type: "default" | "float16" | "int8_float16"
-        """
+    def __init__(self, model_size="small", device="cpu", compute_type="int8", lang="de"):
         self.model_size = model_size
         self.device = device
         self.compute_type = compute_type
         self.lang = lang
         self.model = None
         self._running = False
+        self._loading = False
+        self._loaded = threading.Event()
         self._thread = None
         self._audio_queue = queue.Queue()
         self.on_result = None
@@ -47,25 +43,33 @@ class STTEngine:
 
     def load_model(self):
         if not self._available:
-            logger.error("faster-whisper not installed")
             return False
-        try:
-            logger.info(f"Loading faster-whisper model '{self.model_size}' on {self.device}...")
-            self.model = WhisperModel(
-                self.model_size,
-                device=self.device,
-                compute_type=self.compute_type,
-                download_root=os.environ.get("WHISPER_MODEL_DIR", None),
-            )
-            logger.info("Whisper model loaded")
+        if self._loaded.is_set():
             return True
+        if self._loading:
+            return True
+        self._loading = True
+        logger.info("Loading faster-whisper {} in background...".format(self.model_size))
+        threading.Thread(target=self._do_load, daemon=True).start()
+        return True
+
+    def _do_load(self):
+        try:
+            self.model = WhisperModel(
+                self.model_size, device=self.device,
+                compute_type=self.compute_type,
+                download_root=os.environ.get("WHISPER_MODEL_DIR"),
+            )
+            self._loaded.set()
+            logger.info("Whisper model loaded")
         except Exception as e:
-            logger.error(f"Failed to load whisper model '{self.model_size}': {e}")
+            logger.error("Whisper model load failed: %s", e)
             self._available = False
-            return False
+            self._loaded.set()
+        finally:
+            self._loading = False
 
     def start(self):
-        """Start streaming mode (unused for now, placeholder)."""
         self._running = True
         self._thread = threading.Thread(target=self._run_stream, daemon=True)
         self._thread.start()
@@ -76,51 +80,49 @@ class STTEngine:
             self._thread.join(timeout=2.0)
             self._thread = None
 
-    def feed_audio(self, pcm_bytes: bytes):
+    def feed_audio(self, pcm_bytes):
         if self._running:
             self._audio_queue.put(pcm_bytes)
 
     def _run_stream(self):
-        """Streaming mode thread (placeholder — batch transcribe is recommended)."""
         chunks = []
         while self._running:
             try:
-                data = self._audio_queue.get(timeout=0.5)
-                chunks.append(data)
+                chunks.append(self._audio_queue.get(timeout=0.5))
             except queue.Empty:
                 continue
         if chunks:
-            combined = b"".join(chunks)
-            text = self.process_file(combined)
+            text = self.process_file(b"".join(chunks))
             if text and self.on_result:
                 self.on_result(text)
 
-    def process_file(self, pcm_data: bytes) -> str:
-        """Transcribe PCM16 mono audio. Returns transcribed text."""
+    def process_file(self, pcm_data):
         if not self._available:
-            return "(STT unavailable — install faster-whisper)"
+            return "(STT unavailable)"
         if self.model is None:
-            if not self.load_model():
-                return "(STT model failed to load)"
+            self.load_model()
+        if not self._loaded.wait(timeout=600):
+            return "(STT download timed out)"
         try:
-            wav_bytes = _pcm_to_wav_bytes(pcm_data)
-            segments, info = self.model.transcribe(
-                io.BytesIO(wav_bytes),
-                language=self.lang,
-                beam_size=5,
-                vad_filter=True,
+            wav = _pcm_to_wav_bytes(pcm_data)
+            segments, _ = self.model.transcribe(
+                io.BytesIO(wav), language=self.lang,
+                beam_size=5, vad_filter=True,
                 vad_parameters=dict(min_silence_duration_ms=500),
             )
-            text = " ".join(seg.text for seg in segments)
-            return text.strip()
+            return " ".join(s.text for s in segments).strip()
         except Exception as e:
-            logger.error(f"Whisper transcribe error: {e}")
+            logger.error("Transcribe error: %s", e)
             return ""
 
     @property
-    def is_running(self) -> bool:
+    def is_running(self):
         return self._running
 
     @property
-    def available(self) -> bool:
+    def available(self):
         return self._available
+
+    @property
+    def is_loaded(self):
+        return self._loaded.is_set()

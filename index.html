@@ -1868,11 +1868,8 @@
                 method: 'POST',
                 body: form
             });
-            if (!resp.ok) {
-                const err = await resp.json();
-                throw new Error(err.detail || 'Transcribe failed');
-            }
             const data = await resp.json();
+            if (!resp.ok) throw new Error(data.detail || 'Transcribe failed');
             const text = data.text || '(no speech detected)';
             output.innerHTML = '';
             const p = document.createElement('div');
@@ -1880,6 +1877,9 @@
             p.style.lineHeight = '1.5';
             p.textContent = text;
             output.appendChild(p);
+            if (text.startsWith('(Model is downloading')) {
+                setTimeout(() => document.getElementById('stt-process-btn').click(), 5000);
+            }
             console.log('STT result:', text);
         } catch (e) {
             output.innerHTML = `<span style="color:var(--accent);">Error: ${e.message}</span>`;

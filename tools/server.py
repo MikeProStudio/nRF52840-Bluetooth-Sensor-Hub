@@ -357,7 +357,10 @@ async def stt_process():
     data = audio_buffer.read_all()
     if len(data) < 16000:
         raise HTTPException(400, "Not enough audio data (need ~1s)")
-    text = stt_engine.process_file(data)
+    if not stt_engine.is_loaded:
+        stt_engine.load_model()
+        raise HTTPException(503, "Model is downloading, please retry")
+    text = await asyncio.get_event_loop().run_in_executor(None, stt_engine.process_file, data)
     logger.info(f"STT batch result: {text}")
     return {"text": text}
 
@@ -370,12 +373,20 @@ async def stt_transcribe(file: UploadFile = File(...)):
     try:
         with wave.open(io.BytesIO(content), 'rb') as wf:
             if wf.getnchannels() != 1 or wf.getsampwidth() != 2:
-                raise HTTPException(400, f"Expected mono 16-bit WAV, got {wf.getnchannels()}ch {wf.getsampwidth()*8}bit")
+                raise HTTPException(400, f"Expected mono 16-bit WAV")
             if wf.getframerate() != 16000:
-                logger.warning(f"Sample rate {wf.getframerate()}Hz, resampling not implemented")
+                logger.warning(f"Sample rate {wf.getframerate()}Hz")
             pcm = wf.readframes(wf.getnframes())
         logger.info(f"STT transcribe: {len(pcm)} bytes PCM")
-        text = stt_engine.process_file(pcm)
+
+        if not stt_engine.is_loaded:
+            if not stt_engine.available:
+                return {"text": "(STT unavailable — install faster-whisper)"}
+            stt_engine.load_model()
+            return {"text": "(Model is downloading, please wait..."}
+
+        text = await asyncio.get_event_loop().run_in_executor(
+            None, stt_engine.process_file, pcm)
         logger.info(f"STT result: {text}")
         return {"text": text}
     except wave.Error as e:
