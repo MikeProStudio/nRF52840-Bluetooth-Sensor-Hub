@@ -11,10 +11,23 @@ echo  Skynet AI - Auto Deploy to XIAO-SENSE
 echo ==============================================
 echo.
 
-:: ── Step 1: Build ──
-echo [1/3] Building firmware...
 cd /d "%PROJECT_ROOT%"
 
+:: ── Step 1: Check for existing .uf2 ──
+echo [1/3] Looking for existing .uf2...
+for /r "%PROJECT_ROOT%\build" %%f in (*.uf2) do (
+    set UF2_PATH=%%f
+)
+if not "!UF2_PATH!"=="" (
+    echo [OK] Found existing: !UF2_PATH!
+    echo       Skipping build (use "build.bat" manually to rebuild)
+    goto skip_build
+)
+echo [INFO] No existing .uf2 found, starting build...
+echo.
+
+:: ── Step 1b: Build ──
+echo [1/3] Building firmware...
 call build.bat
 if %errorlevel% neq 0 (
     echo [ERROR] Build failed with errorlevel=%errorlevel%
@@ -24,8 +37,8 @@ if %errorlevel% neq 0 (
 echo [OK] Build successful
 echo.
 
-:: ── Step 2: Find .uf2 file ──
-echo [2/3] Looking for .uf2 output...
+:: ── Step 1c: Find .uf2 after build ──
+echo [1/3] Looking for .uf2 output...
 for /r "%PROJECT_ROOT%\build" %%f in (*.uf2) do (
     set UF2_PATH=%%f
 )
@@ -37,8 +50,10 @@ if "!UF2_PATH!"=="" (
 echo [OK] Found: !UF2_PATH!
 echo.
 
-:: ── Step 3: Wait for XIAO-SENSE (D:\) and deploy ──
-echo [3/3] Waiting for XIAO-SENSE on %TARGET_DRIVE%...
+:skip_build
+
+:: ── Step 2: Wait for XIAO-SENSE (D:\) and deploy ──
+echo [2/2] Waiting for XIAO-SENSE on %TARGET_DRIVE%...
 echo.
 echo Put the board into UF2 bootloader mode (double-tap reset),
 echo then press any key to continue...
