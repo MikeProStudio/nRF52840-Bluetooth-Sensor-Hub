@@ -639,12 +639,24 @@
                 <button id="testtone-btn" style="padding:8px 14px;font-size:0.7rem;border-color:var(--text-dim);color:var(--text-dim);">Test Tone</button>
                 <button id="assistant-toggle-btn" style="display:none;padding:8px 14px;font-size:0.7rem;" disabled>AI Mode: OFF</button>
                 <button id="live-audio-btn" disabled style="padding:8px 14px;font-size:0.7rem;border-color:var(--primary);color:var(--primary);">🔴 Live Audio</button>
+                <button id="nr-toggle-btn" disabled style="padding:8px 14px;font-size:0.7rem;border-color:var(--green);color:var(--green);">NR: ON</button>
             </div>
             <audio id="audio-player" style="display:none" controls></audio>
             <div class="gain-row">
                 <span style="font-size:0.75rem;color:var(--text-dim);">Gain:</span>
-                <input type="range" id="gain-slider" min="0.1" max="100" step="0.1" value="8.0">
+                <input type="range" id="gain-slider" min="0.1" max="15.0" step="0.1" value="8.0" list="gain-ticks">
+                <datalist id="gain-ticks">
+                    <option value="0.5"><option value="1"><option value="2"><option value="3">
+                    <option value="4"><option value="5"><option value="6"><option value="8">
+                    <option value="10"><option value="12"><option value="15">
+                </datalist>
                 <span class="gain-label" id="gain-label">8.0x</span>
+            </div>
+            <div class="nr-config-row" id="nr-config" style="display:flex;align-items:center;gap:12px;margin-bottom:6px;">
+                <span style="font-size:0.65rem;color:var(--text-dim);">NR Sens:</span>
+                <input type="range" id="nr-sens" min="1" max="100" value="30" style="width:80px;accent-color:var(--green);">
+                <span style="font-size:0.65rem;color:var(--text-dim);">Thresh:</span>
+                <input type="range" id="nr-thresh" min="10" max="100" value="40" style="width:80px;accent-color:var(--green);">
             </div>
             <div class="waveform-container">
                 <canvas id="waveformCanvas"></canvas>
@@ -716,6 +728,36 @@
                 out[oi++] = state.predictor;
             }
         }
+        return out;
+    }
+
+    let nrEnabled = true;
+    let nrNoiseFloor = 0.0005;
+    let nrSmoothedRms = 0.0005;
+
+    function processAudio(samples) {
+        const gain = parseFloat(document.getElementById('gain-slider').value) || 8.0;
+        if (!nrEnabled) {
+            const out = new Int16Array(samples.length);
+            for (let i = 0; i < samples.length; i++) { let v=Math.round(samples[i]*gain); if(v>32767)v=32767; else if(v<-32768)v=-32768; out[i]=v; }
+            return out;
+        }
+        const nrSens=(parseFloat(document.getElementById('nr-sens').value)||30)/100;
+        const nrThresh=(parseFloat(document.getElementById('nr-thresh').value)||40)/10;
+        let sumSq=0; for(let i=0;i<samples.length;i++){const s=samples[i]/32768;sumSq+=s*s;}
+        const blockRms=Math.sqrt(sumSq/samples.length)||1e-7;
+        const alphaUp=0.2, alphaDown=0.02;
+        if(blockRms>nrSmoothedRms) nrSmoothedRms=alphaUp*blockRms+(1-alphaUp)*nrSmoothedRms;
+        else nrSmoothedRms=alphaDown*blockRms+(1-alphaDown)*nrSmoothedRms;
+        const alphaFloor=nrSens*0.0033;
+        nrNoiseFloor=(1-alphaFloor)*nrNoiseFloor+alphaFloor*Math.min(nrNoiseFloor,nrSmoothedRms);
+        const noiseRef=Math.max(nrNoiseFloor*nrThresh,0.0002);
+        const snr=nrSmoothedRms/noiseRef;
+        let nrGain=(snr>1)?Math.min(1,(snr-0.5)/snr):Math.max(0.05,snr*snr*5);
+        nrGain=0.05+0.95*nrGain;
+        const totalGain=gain*nrGain;
+        const out=new Int16Array(samples.length);
+        for(let i=0;i<samples.length;i++){let v=Math.round(samples[i]*totalGain);if(v>32767)v=32767;else if(v<-32768)v=-32768;out[i]=v;}
         return out;
     }
 
@@ -1169,6 +1211,7 @@
         document.getElementById('reset-btn').style.display = 'none';
         document.getElementById('deepsleep-btn').style.display = 'none';
         document.getElementById('live-audio-btn').disabled = true;
+        document.getElementById('nr-toggle-btn').disabled = true;
         liveAudioActive = false;
         document.getElementById('live-audio-btn').innerText = '🔴 Live Audio';
         document.getElementById('live-audio-btn').style.borderColor = '';
@@ -1212,6 +1255,7 @@
         document.getElementById('reset-btn').style.display = 'none';
         document.getElementById('deepsleep-btn').style.display = 'none';
         document.getElementById('live-audio-btn').disabled = true;
+        document.getElementById('nr-toggle-btn').disabled = true;
         liveAudioActive = false;
         document.getElementById('live-audio-btn').innerText = '🔴 Live Audio';
         document.getElementById('live-audio-btn').style.borderColor = '';
@@ -1425,7 +1469,7 @@
                 localAdpcmState = { predictor: 0, stepIndex: 0 };
             }
             const adpcmPayload = data.slice(1);
-            const pcm = adpcmDecode(adpcmPayload, localAdpcmState);
+            const pcm = processAudio(adpcmDecode(adpcmPayload, localAdpcmState));
             if (localRecording) {
                 for (let i = 0; i < pcm.length; i++) localAudioPcm.push(pcm[i]);
             }
@@ -1460,6 +1504,8 @@
         };
 
         document.getElementById('live-audio-btn').disabled = false;
+        document.getElementById('nr-toggle-btn').disabled = false;
+        document.getElementById('gain-slider').disabled = false;
         startRenderLoop();
     }
 
@@ -1500,6 +1546,8 @@
             document.getElementById('reset-btn').style.display = 'block';
             document.getElementById('deepsleep-btn').style.display = 'block';
             document.getElementById('live-audio-btn').disabled = false;
+            document.getElementById('nr-toggle-btn').disabled = false;
+            document.getElementById('gain-slider').disabled = false;
             bleConnected = true;
             manualDisconnect = false;
             startRenderLoop();
@@ -1585,6 +1633,7 @@
                 document.getElementById('chat-input').disabled = false;
                 document.getElementById('chat-send-btn').disabled = false;
                 document.getElementById('gain-slider').disabled = false;
+                document.getElementById('nr-toggle-btn').disabled = false;
                 document.getElementById('ble-connect-btn').disabled = false;
                 document.getElementById('ble-scan-btn').style.display = 'inline-block';
                 document.getElementById('ble-scan-btn').disabled = false;
@@ -1659,11 +1708,13 @@
         document.getElementById('chat-input').disabled = true;
         document.getElementById('chat-send-btn').disabled = true;
         document.getElementById('gain-slider').disabled = true;
+        document.getElementById('nr-toggle-btn').disabled = true;
         document.getElementById('ble-scan-btn').style.display = 'none';
         document.getElementById('ble-scan-btn').disabled = true;
         document.getElementById('assistant-toggle-btn').style.display = 'none';
         document.getElementById('assistant-toggle-btn').disabled = true;
         document.getElementById('live-audio-btn').disabled = true;
+        document.getElementById('nr-toggle-btn').disabled = true;
         liveAudioActive = false;
         document.getElementById('live-audio-btn').innerText = '🔴 Live Audio';
         document.getElementById('live-audio-btn').style.borderColor = '';
@@ -1737,6 +1788,8 @@
             btn.style.borderColor = 'var(--accent)';
             btn.style.color = 'var(--accent)';
             document.getElementById('live-audio-btn').disabled = false;
+            document.getElementById('nr-toggle-btn').disabled = false;
+            document.getElementById('gain-slider').disabled = false;
             document.getElementById('recording-duration').innerText = 'BLE: ' + (data.device || 'Online');
         } catch (e) {
             statusEl.innerHTML = `<span style="color:var(--accent);">${e.message}</span>`;
@@ -1776,14 +1829,19 @@
     document.getElementById('gain-slider').addEventListener('input', async () => {
         const val = parseFloat(document.getElementById('gain-slider').value);
         document.getElementById('gain-label').innerText = val.toFixed(1) + 'x';
-        try {
-            await fetch(`${backendBaseUrl}/api/gain`, {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({gain: val})
-            });
-        } catch (e) {
-            console.error('Set gain error:', e);
+    });
+
+    document.getElementById('nr-toggle-btn').addEventListener('click', () => {
+        nrEnabled = !nrEnabled;
+        const btn = document.getElementById('nr-toggle-btn');
+        if (nrEnabled) {
+            btn.innerText = 'NR: ON';
+            btn.style.borderColor = 'var(--green)';
+            btn.style.color = 'var(--green)';
+        } else {
+            btn.innerText = 'NR: OFF';
+            btn.style.borderColor = 'var(--text-dim)';
+            btn.style.color = 'var(--text-dim)';
         }
     });
 
