@@ -13,6 +13,7 @@
 #include <zephyr/drivers/adc.h>
 #include <zephyr/audio/dmic.h>
 #include <zephyr/sys/byteorder.h>
+#include <sdc_hci_vs.h>
 #include <hal/nrf_power.h>
 #include <hal/nrf_ficr.h>
 #include <nfc_t2t_lib.h>
@@ -179,6 +180,7 @@ static void oled_clear(void);
 static void oled_puts(int16_t x, int16_t y, const char *str);
 static void oled_flush(void);
 static void oled_apply_settings(void);
+static void update_tx_power_based_on_battery_impl(void);
 static int oled_init(void);
 static k_tid_t main_thread_id;
 
@@ -291,42 +293,35 @@ static struct bt_conn_auth_info_cb auth_info_cb = {
 	.pairing_failed = pairing_failed,
 };
 
-/* Set TX Power via Nordic HCI VS Command — apply to both advertising and connection */
+/* Set TX Power via SDC direct API (avoids HCI transport deadlock during active connections) */
 static int set_bt_tx_power(int8_t power_dbm) {
-    struct net_buf *buf, *rsp = NULL;
-    struct bt_hci_cp_vs_write_tx_power_level *cp;
-    struct bt_hci_rp_vs_write_tx_power_level *rp;
-    int err;
-    static const uint8_t handles[] = {
-        BT_HCI_VS_LL_HANDLE_TYPE_ADV,
-        BT_HCI_VS_LL_HANDLE_TYPE_CONN,
-    };
+    uint8_t ret;
+    sdc_hci_cmd_vs_zephyr_write_tx_power_t params;
+    sdc_hci_cmd_vs_zephyr_write_tx_power_return_t resp;
 
-    for (int i = 0; i < ARRAY_SIZE(handles); i++) {
-        buf = bt_hci_cmd_create(BT_HCI_OP_VS_WRITE_TX_POWER_LEVEL, sizeof(*cp));
-        if (!buf) {
-            printk("Unable to allocate command buffer\n");
-            continue;
-        }
-        cp = net_buf_add(buf, sizeof(*cp));
-        cp->handle_type = handles[i];
-        cp->handle = 0;
-        cp->tx_power_level = power_dbm;
+    params.handle_type = SDC_HCI_VS_TX_POWER_HANDLE_TYPE_ADV;
+    params.handle = 0;
+    params.tx_power_level = power_dbm;
 
-        err = bt_hci_cmd_send_sync(BT_HCI_OP_VS_WRITE_TX_POWER_LEVEL, buf, &rsp);
-        if (err) {
-            printk("TX Power (handle_type=%u) HCI failed (%d)\n", handles[i], err);
-            continue;
-        }
-        if (rsp) {
-            rp = (struct bt_hci_rp_vs_write_tx_power_level *)rsp->data;
-            printk("TX Power: handle_type=%u handle=%u level=%d dBm (req=%d dBm)\n",
-                   rp->handle_type, rp->handle, rp->selected_tx_power, power_dbm);
-            tx_power_level = rp->selected_tx_power;
-            net_buf_unref(rsp);
-            rsp = NULL;
-        }
+    ret = sdc_hci_cmd_vs_zephyr_write_tx_power(&params, &resp);
+    if (ret) {
+        printk("TX Power (ADV) SDC failed: 0x%02x\n", ret);
+    } else {
+        printk("TX Power (ADV): selected=%d dBm (req=%d dBm)\n",
+               resp.selected_tx_power, power_dbm);
+        tx_power_level = resp.selected_tx_power;
     }
+
+    params.handle_type = SDC_HCI_VS_TX_POWER_HANDLE_TYPE_CONN;
+    ret = sdc_hci_cmd_vs_zephyr_write_tx_power(&params, &resp);
+    if (ret) {
+        printk("TX Power (CONN) SDC failed: 0x%02x\n", ret);
+    } else {
+        printk("TX Power (CONN): selected=%d dBm (req=%d dBm)\n",
+               resp.selected_tx_power, power_dbm);
+        tx_power_level = resp.selected_tx_power;
+    }
+
     return 0;
 }
 
@@ -343,6 +338,7 @@ static bool filter_full = false;
 
 /* ── Persist OLED settings to flash via Zephyr settings subsystem ── */
 #define SETTINGS_KEY_OLED "skynet/oled"
+
 static void ccc_cfg_changed(const struct bt_gatt_attr *attr, uint16_t value) {}
 
 static int settings_set_oled(const char *key, size_t len, settings_read_cb read_cb, void *cb_arg)
@@ -435,9 +431,9 @@ static ssize_t write_oled_settings(struct bt_conn *conn, const struct bt_gatt_at
 		k_work_cancel_delayable(&deepsleep_work);
 		printk("Deepsleep disabled\n");
 	}
-	if (oled_settings.tx_power != 0 && oled_settings.tx_power != old_tx) {
-		set_bt_tx_power(oled_settings.tx_power);
-		printk("TX power set to %d dBm from settings\n", oled_settings.tx_power);
+	if (oled_settings.tx_power != 0 || old_tx != 0) {
+		/* Re-evaluate TX power via battery workqueue (correct async context) */
+		k_work_reschedule(&batt_work, K_NO_WAIT);
 	}
 	settings_save_one(SETTINGS_KEY_OLED, &oled_settings, sizeof(oled_settings));
 	printk("OLED settings updated and saved to flash\n");
