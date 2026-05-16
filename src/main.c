@@ -118,6 +118,7 @@ static struct oled_settings oled_settings = {
 	.deepsleep_enable = 0,
 	.deepsleep_interval = 1,
 	.deepsleep_oled = 0,
+	.tx_power = 0,
 };
 
 static uint64_t oled_last_activity;
@@ -177,6 +178,7 @@ static void wake_from_deep_sleep(void);
 static void oled_clear(void);
 static void oled_puts(int16_t x, int16_t y, const char *str);
 static void oled_flush(void);
+static void oled_apply_settings(void);
 static int oled_init(void);
 static k_tid_t main_thread_id;
 
@@ -289,54 +291,80 @@ static struct bt_conn_auth_info_cb auth_info_cb = {
 	.pairing_failed = pairing_failed,
 };
 
-/* Set TX Power via Nordic HCI VS Command */
+/* Set TX Power via Nordic HCI VS Command — apply to both advertising and connection */
 static int set_bt_tx_power(int8_t power_dbm) {
     struct net_buf *buf, *rsp = NULL;
     struct bt_hci_cp_vs_write_tx_power_level *cp;
     struct bt_hci_rp_vs_write_tx_power_level *rp;
     int err;
+    static const uint8_t handles[] = {
+        BT_HCI_VS_LL_HANDLE_TYPE_ADV,
+        BT_HCI_VS_LL_HANDLE_TYPE_CONN,
+    };
 
-    /* Create HCI Command (Vendor Specific for nRF) */
-    buf = bt_hci_cmd_create(BT_HCI_OP_VS_WRITE_TX_POWER_LEVEL, sizeof(*cp));
-    if (!buf) {
-        printk("Unable to allocate command buffer\n");
-        return -ENOBUFS;
-    }
+    for (int i = 0; i < ARRAY_SIZE(handles); i++) {
+        buf = bt_hci_cmd_create(BT_HCI_OP_VS_WRITE_TX_POWER_LEVEL, sizeof(*cp));
+        if (!buf) {
+            printk("Unable to allocate command buffer\n");
+            continue;
+        }
+        cp = net_buf_add(buf, sizeof(*cp));
+        cp->handle_type = handles[i];
+        cp->handle = 0;
+        cp->tx_power_level = power_dbm;
 
-    cp = net_buf_add(buf, sizeof(*cp));
-    cp->handle_type = BT_HCI_VS_LL_HANDLE_TYPE_ADV; /* Advertising Set */
-    cp->handle = 0; /* Default handle */
-    cp->tx_power_level = power_dbm;
-
-    err = bt_hci_cmd_send_sync(BT_HCI_OP_VS_WRITE_TX_POWER_LEVEL, buf, &rsp);
-    if (err) {
-        printk("Set TX Power HCI failed (%d), assuming static config. Target: %d dBm\n", err, power_dbm);
-        tx_power_level = power_dbm;
-        return 0; // Fake success to continue logic
-    }
-
-    if (rsp) {
-        rp = (void *)rsp->data;
-        printk("Set TX Power success. Selected: %d dBm\n", rp->selected_tx_power);
-        tx_power_level = rp->selected_tx_power; /* Update global variable for reporting */
-        net_buf_unref(rsp);
+        err = bt_hci_cmd_send_sync(BT_HCI_OP_VS_WRITE_TX_POWER_LEVEL, buf, &rsp);
+        if (err) {
+            printk("TX Power (handle_type=%u) HCI failed (%d)\n", handles[i], err);
+            continue;
+        }
+        if (rsp) {
+            rp = (struct bt_hci_rp_vs_write_tx_power_level *)rsp->data;
+            printk("TX Power: handle_type=%u handle=%u level=%d dBm (req=%d dBm)\n",
+                   rp->handle_type, rp->handle, rp->selected_tx_power, power_dbm);
+            tx_power_level = rp->selected_tx_power;
+            net_buf_unref(rsp);
+            rsp = NULL;
+        }
     }
     return 0;
 }
 
+/* ADC filter globals */
 static int16_t sample_buffer[1];
 static struct adc_sequence sequence = {
 	.buffer = sample_buffer,
 	.buffer_size = sizeof(sample_buffer),
 };
-
-/* Filter storage */
 #define FILTER_SIZE 12
 static int32_t adc_history[FILTER_SIZE] = {0};
 static int filter_idx = 0;
 static bool filter_full = false;
 
+/* ── Persist OLED settings to flash via Zephyr settings subsystem ── */
+#define SETTINGS_KEY_OLED "skynet/oled"
 static void ccc_cfg_changed(const struct bt_gatt_attr *attr, uint16_t value) {}
+
+static int settings_set_oled(const char *key, size_t len, settings_read_cb read_cb, void *cb_arg)
+{
+	if (strcmp(key, "oled") != 0) return 0;
+	ssize_t sz = read_cb(cb_arg, &oled_settings, sizeof(oled_settings));
+	if (sz < 0) return sz;
+	oled_apply_settings();
+	printk("OLED settings restored from flash\n");
+	return 0;
+}
+
+static int settings_export_oled(int (*cb)(const char *name, const void *value, size_t val_len))
+{
+	return cb(SETTINGS_KEY_OLED, &oled_settings, sizeof(oled_settings));
+}
+
+static struct settings_handler skynet_settings = {
+	.name = "skynet",
+	.h_set = settings_set_oled,
+	.h_export = settings_export_oled,
+};
 
 static ssize_t read_tx_power(struct bt_conn *conn, const struct bt_gatt_attr *attr,
 			     void *buf, uint16_t len, uint16_t offset)
@@ -399,6 +427,7 @@ static ssize_t write_oled_settings(struct bt_conn *conn, const struct bt_gatt_at
 {
 	if (offset + len > sizeof(oled_settings))
 		return BT_GATT_ERR(BT_ATT_ERR_INVALID_OFFSET);
+	int8_t old_tx = oled_settings.tx_power;
 	memcpy((uint8_t *)&oled_settings + offset, buf, len);
 	oled_apply_settings();
 	k_work_reschedule_for_queue(&oled_work_q, &oled_work, K_NO_WAIT);
@@ -406,7 +435,12 @@ static ssize_t write_oled_settings(struct bt_conn *conn, const struct bt_gatt_at
 		k_work_cancel_delayable(&deepsleep_work);
 		printk("Deepsleep disabled\n");
 	}
-	printk("OLED settings updated\n");
+	if (oled_settings.tx_power != 0 && oled_settings.tx_power != old_tx) {
+		set_bt_tx_power(oled_settings.tx_power);
+		printk("TX power set to %d dBm from settings\n", oled_settings.tx_power);
+	}
+	settings_save_one(SETTINGS_KEY_OLED, &oled_settings, sizeof(oled_settings));
+	printk("OLED settings updated and saved to flash\n");
 	return len;
 }
 
@@ -514,6 +548,12 @@ static void read_battery_voltage_impl(void)
 
 static void update_tx_power_based_on_battery_impl(void)
 {
+	if (oled_settings.tx_power != 0) {
+		if (tx_power_level != oled_settings.tx_power) {
+			set_bt_tx_power(oled_settings.tx_power);
+		}
+		return;
+	}
 	/* High power if > 20% OR on external power */
 	int8_t target_power;
 	if (battery_status.soc < 20 && battery_status.status == 0) {
@@ -1330,9 +1370,10 @@ int main(void) {
 	printk("DEVICE UNIQUE PIN: %06u\n", generated_passkey);
 	printk("----------------------------------\n");
 
-	/* Settings müssen VOR bt_enable() geladen werden, damit die BT-Identität (BLE-Address)
-	   aus NVS restaured wird und nach Power-Cycle gleich bleibt */
-	if (IS_ENABLED(CONFIG_BT_SETTINGS)) {
+	/* Register custom settings handler and load settings from flash.
+	   Settings must load BEFORE bt_enable() so BT identity is restored. */
+	if (IS_ENABLED(CONFIG_SETTINGS)) {
+		settings_register(&skynet_settings);
 		settings_load();
 	}
 

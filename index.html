@@ -476,6 +476,27 @@
                 </div>
             </div>
 
+            <div class="settings-section">
+                <h3>TX Power</h3>
+                <div class="setting-row">
+                    <span class="setting-label">TX Power <small>0 = auto (based on battery), -40..+8 dBm manual</small></span>
+                    <div class="setting-control">
+                        <select id="set-tx-power" style="background:#0a0f14;border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:'JetBrains Mono';padding:5px 8px;font-size:0.85rem;">
+                            <option value="0">Auto (battery)</option>
+                            <option value="-40">-40 dBm (100 nW)</option>
+                            <option value="-20">-20 dBm (10 &micro;W)</option>
+                            <option value="-12">-12 dBm (63 &micro;W)</option>
+                            <option value="-8">-8 dBm (158 &micro;W)</option>
+                            <option value="-4">-4 dBm (398 &micro;W)</option>
+                            <option value="0">0 dBm (1.0 mW)</option>
+                            <option value="4">+4 dBm (2.5 mW)</option>
+                            <option value="8">+8 dBm (6.3 mW)</option>
+                            <option value="12">+12 dBm (15.8 mW)</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+
             <div class="settings-section" style="border-top:1px solid var(--border);padding-top:12px;margin-bottom:0;">
                 <h3>System Info</h3>
                 <div class="setting-row">
@@ -544,7 +565,7 @@
             <div class="digital-readout" style="color: var(--primary);">
                 <span id="rssi-val">--</span><span class="unit">dBm</span>
             </div>
-            <div class="unit-row"><span id="tx-mw">--</span> mW | <span id="tx-status" style="color: var(--primary);">HIGH POWER</span></div>
+            <div class="unit-row"><span id="tx-mw">--</span> | <span id="tx-status" style="color: var(--primary);">HIGH POWER</span></div>
         </div>
         <div class="card">
             <h2>Power Management</h2>
@@ -906,7 +927,7 @@
         try {
             const txChar = await settingsService.getCharacteristic(TX_POWER_CHAR);
             const v = await txChar.readValue();
-            document.getElementById('info-txpower').innerText = v.getInt8(0) + ' dBm';
+            document.getElementById('info-txpower').innerText = fmtTxPower(v.getInt8(0)) + ' (' + v.getInt8(0) + ' dBm)';
         } catch(e) {}
     }
 
@@ -918,11 +939,16 @@
     document.getElementById('settings-close').addEventListener('click', closeSettingsPanel);
     document.getElementById('settings-cancel').addEventListener('click', closeSettingsPanel);
 
-    const contrastSlider = document.getElementById('set-contrast');
-    const contrastVal = document.getElementById('contrast-val');
-    contrastSlider.addEventListener('input', () => { contrastVal.textContent = contrastSlider.value; });
+    function fmtTxPower(dbm) {
+        if (dbm <= -40) return (100 * Math.pow(10, (dbm + 40) / 10)).toFixed(0) + ' nW';
+        if (dbm <= -4) return (1000 * Math.pow(10, dbm / 10)).toFixed(0) + ' \u00B5W';
+        return Math.pow(10, dbm / 10).toFixed(1) + ' mW';
+    }
+
+    document.getElementById('settings-save').addEventListener('click', writeSettingsToDevice);
 
     async function readSettingsFromDevice() {
+        if (!settingsService) return;
         try {
             const c = await settingsService.getCharacteristic(OLED_SETTINGS_CHAR);
             const v = await c.readValue();
@@ -943,16 +969,15 @@
             document.getElementById('set-deepsleep-enable').checked = dv.getUint8(11) !== 0;
             document.getElementById('set-deepsleep-interval').value = dv.getUint8(12);
             document.querySelector('input[name="deepsleep-oled"][value="' + dv.getUint8(13) + '"]').checked = true;
-            document.getElementById('settings-save').disabled = false;
-            console.log("Senior-UI: OLED settings loaded from device.");
+            document.getElementById('set-tx-power').value = dv.getInt8(14);
         } catch(e) {
-            console.error("Senior-UI: Failed to read OLED settings:", e);
+            console.error("Failed to read OLED settings:", e);
         }
     }
 
     async function writeSettingsToDevice() {
         if (!settingsService) return;
-        const buf = new Uint8Array(14);
+        const buf = new Uint8Array(15);
         buf[0] = parseInt(document.getElementById('set-beacon-dwell').value) || 2;
         buf[1] = parseInt(document.getElementById('set-qr-dwell').value) || 10;
         buf[2] = parseInt(document.getElementById('set-imu-dwell').value) || 8;
@@ -968,17 +993,29 @@
         let iv = parseInt(document.getElementById('set-deepsleep-interval').value);
         buf[12] = (iv >= 0 && iv <= 5) ? iv : 1;
         buf[13] = parseInt(document.querySelector('input[name="deepsleep-oled"]:checked').value) || 0;
+        buf[14] = parseInt(document.getElementById('set-tx-power').value) || 0;
         try {
             const c = await settingsService.getCharacteristic(OLED_SETTINGS_CHAR);
             await c.writeValue(buf);
             console.log("Senior-UI: OLED settings written to device.");
+            try {
+                const txChar = await settingsService.getCharacteristic(TX_POWER_CHAR);
+                const v = await txChar.readValue();
+                const dbm = v.getInt8(0);
+                document.getElementById('info-txpower').innerText = fmtTxPower(dbm) + ' (' + dbm + ' dBm)';
+                document.getElementById('rssi-val').innerText = dbm;
+                document.getElementById('tx-mw').innerText = fmtTxPower(dbm);
+                document.getElementById('tx-pcnt').innerText = Math.round(((dbm + 40) / 48) * 100);
+                const txs = document.getElementById('tx-status');
+                if (dbm >= 4) { txs.innerText = 'HIGH POWER'; txs.style.color = 'var(--primary)'; }
+                else if (dbm >= -4) { txs.innerText = 'BALANCED'; txs.style.color = 'var(--mid)'; }
+                else { txs.innerText = 'POWER SAVE'; txs.style.color = 'var(--accent)'; }
+            } catch(e) {}
             closeSettingsPanel();
         } catch(e) {
             console.error("Senior-UI: Failed to write OLED settings:", e);
         }
     }
-
-    document.getElementById('settings-save').addEventListener('click', writeSettingsToDevice);
 
     const intervalLabels = ['10 Seconds', '1 Minute', '10 Minutes', '1 Hour', '10 Hours', '24 Hours'];
 
@@ -1029,7 +1066,7 @@
     document.getElementById('ds-confirm-yes').addEventListener('click', async () => {
         document.getElementById('deepsleep-confirm').classList.remove('active');
         if (!settingsService) return;
-        const buf = new Uint8Array(14);
+        const buf = new Uint8Array(15);
         buf[0] = parseInt(document.getElementById('set-beacon-dwell').value) || 2;
         buf[1] = parseInt(document.getElementById('set-qr-dwell').value) || 10;
         buf[2] = parseInt(document.getElementById('set-imu-dwell').value) || 8;
@@ -1046,6 +1083,7 @@
         const intervalIdx = (tmp >= 0 && tmp <= 5) ? tmp : 1;
         buf[12] = intervalIdx;
         buf[13] = parseInt(document.querySelector('input[name="deepsleep-oled"]:checked').value) || 0;
+        buf[14] = parseInt(document.getElementById('set-tx-power').value) || 0;
         try {
             const c = await settingsService.getCharacteristic(OLED_SETTINGS_CHAR);
             await c.writeValue(buf);
@@ -1348,8 +1386,14 @@
 
     document.getElementById('connect-btn').addEventListener('click', async () => {
         const btn = document.getElementById('connect-btn');
-        if (bluetoothDevice && bluetoothDevice.gatt.connected) {
+        if (bluetoothDevice && bluetoothDevice.gatt && bluetoothDevice.gatt.connected) {
             disconnectDevice();
+            return;
+        }
+        if (!navigator.bluetooth) {
+            btn.innerText = 'Web BT N/A';
+            console.error('Web Bluetooth not available (require HTTPS or localhost)');
+            setTimeout(() => { btn.innerText = 'CONNECT TO nRF52'; }, 3000);
             return;
         }
         btn.innerText = 'CONNECTING...';
@@ -1562,6 +1606,11 @@
             btn.style.borderColor = 'var(--text-dim)';
             btn.style.color = 'var(--text-dim)';
             document.getElementById('ble-status').innerHTML = '<span style="color:var(--text-dim);">Offline</span>';
+            return;
+        }
+        if (!navigator.bluetooth) {
+            btn.innerText = 'N/A';
+            setTimeout(() => { btn.innerText = 'nRF52'; }, 3000);
             return;
         }
         btn.innerText = 'Connecting...';
@@ -1844,9 +1893,10 @@
                     else { badge.style.display='inline-block'; badge.innerText='BATTERY'; badge.style.background='var(--low)'; }
                     document.getElementById('batt-volt').style.color = d.soc > 50 ? 'var(--green)' : d.soc > 20 ? 'var(--high)' : 'var(--accent)';
                 } else if (msg.type === 'tx_power') {
-                    document.getElementById('rssi-val').innerText = d.dbm;
-                    document.getElementById('tx-mw').innerText = Math.pow(10, d.dbm / 10).toFixed(2);
-                    document.getElementById('tx-pcnt').innerText = Math.round(((d.dbm + 40) / 48) * 100);
+                    const dbm = d.dbm;
+                    document.getElementById('rssi-val').innerText = dbm;
+                    document.getElementById('tx-mw').innerText = fmtTxPower(dbm);
+                    document.getElementById('tx-pcnt').innerText = Math.round(((dbm + 40) / 48) * 100);
                     const txs = document.getElementById('tx-status');
                     if (d.dbm >= 4) { txs.innerText = 'HIGH POWER'; txs.style.color = 'var(--primary)'; }
                     else if (d.dbm >= -4) { txs.innerText = 'BALANCED'; txs.style.color = 'var(--mid)'; }

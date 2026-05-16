@@ -25,6 +25,7 @@ struct oled_settings {
 	uint8_t deepsleep_enable;
 	uint8_t deepsleep_interval;
 	uint8_t deepsleep_oled;
+	int8_t tx_power;
 } __packed;
 
 struct audio_stream_config {
