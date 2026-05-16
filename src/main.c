@@ -13,6 +13,7 @@
 #include <zephyr/drivers/adc.h>
 #include <zephyr/audio/dmic.h>
 #include <zephyr/sys/byteorder.h>
+#include <sdc_hci_vs.h>
 #include <hal/nrf_power.h>
 #include <hal/nrf_ficr.h>
 #include <nfc_t2t_lib.h>
@@ -26,6 +27,7 @@
 #include "font8x8.h"
 #include "font8x16.h"
 #include "qrcodegen.h"
+#include "audio_stream.h"
 
 /* --- Hardware Definitions --- */
 #define LED0_NODE DT_ALIAS(led0)
@@ -59,16 +61,20 @@ static const struct adc_dt_spec adc_channel = ADC_DT_SPEC_GET_BY_IDX(DT_PATH(zep
 #define BT_UUID_TX_POWER_CHRC_VAL  BT_UUID_128_ENCODE(0x12345678, 0x1234, 0x5678, 0x1234, 0x56789abcdef4)
 #define BT_UUID_BATTERY_CHRC_VAL   BT_UUID_128_ENCODE(0x12345678, 0x1234, 0x5678, 0x1234, 0x56789abcdef5)
 #define BT_UUID_RESET_CHRC_VAL     BT_UUID_128_ENCODE(0x12345678, 0x1234, 0x5678, 0x1234, 0x56789abcdef6)
+#define BT_UUID_AUDIO_STREAM_CHRC_VAL BT_UUID_128_ENCODE(0x12345678, 0x1234, 0x5678, 0x1234, 0x56789abcdef8)
 #define BT_UUID_OLED_SETTINGS_CHRC_VAL BT_UUID_128_ENCODE(0x12345678, 0x1234, 0x5678, 0x1234, 0x56789abcdef7)
+#define BT_UUID_LIVE_AUDIO_CTRL_CHRC_VAL BT_UUID_128_ENCODE(0x12345678, 0x1234, 0x5678, 0x1234, 0x56789abcdef9)
 
 #define BT_UUID_CUSTOM_SERVICE  BT_UUID_DECLARE_128(BT_UUID_CUSTOM_SERVICE_VAL)
 #define BT_UUID_ACCEL_CHRC      BT_UUID_DECLARE_128(BT_UUID_ACCEL_CHRC_VAL)
 #define BT_UUID_GYRO_CHRC       BT_UUID_DECLARE_128(BT_UUID_GYRO_CHRC_VAL)
 #define BT_UUID_AUDIO_CHRC      BT_UUID_DECLARE_128(BT_UUID_AUDIO_CHRC_VAL)
+#define BT_UUID_AUDIO_STREAM_CHRC BT_UUID_DECLARE_128(BT_UUID_AUDIO_STREAM_CHRC_VAL)
 #define BT_UUID_TX_POWER_CHRC   BT_UUID_DECLARE_128(BT_UUID_TX_POWER_CHRC_VAL)
 #define BT_UUID_BATTERY_CHRC    BT_UUID_DECLARE_128(BT_UUID_BATTERY_CHRC_VAL)
 #define BT_UUID_RESET_CHRC      BT_UUID_DECLARE_128(BT_UUID_RESET_CHRC_VAL)
 #define BT_UUID_OLED_SETTINGS_CHRC BT_UUID_DECLARE_128(BT_UUID_OLED_SETTINGS_CHRC_VAL)
+#define BT_UUID_LIVE_AUDIO_CTRL_CHRC BT_UUID_DECLARE_128(BT_UUID_LIVE_AUDIO_CTRL_CHRC_VAL)
 
 /* Sichere Indizes für GATT-Charakteristiken (verhindert Magic Numbers) */
 enum {
@@ -76,11 +82,15 @@ enum {
 	IDX_ACCEL_VAL = 2,
 	IDX_GYRO_VAL = 5,
 	IDX_AUDIO_VAL = 8,
-	IDX_TX_POWER_VAL = 11,
-	IDX_BATTERY_VAL = 14,
-	IDX_RESET_VAL = 17,
-	IDX_OLED_SETTINGS_VAL = 19,
+	IDX_AUDIO_STREAM_VAL = 11,
+	IDX_TX_POWER_VAL = 14,
+	IDX_BATTERY_VAL = 17,
+	IDX_RESET_VAL = 20,
+	IDX_OLED_SETTINGS_VAL = 22,
+	IDX_LIVE_AUDIO_CTRL_VAL = 24,
 };
+
+static volatile bool live_audio_active;
 
 /* Data structures for BLE transmission */
 struct imu_data_t {
@@ -97,27 +107,13 @@ static uint8_t audio_level_buf[8]; /* uint32_t RMS + uint32_t ZCR */
 static int8_t tx_power_level = 0; /* Default start value */
 static struct batt_data_t battery_status = {0};
 
-/* OLED Settings (read/write via GATT) */
-struct oled_settings {
-	uint8_t beacon_dwell_s;
-	uint8_t qr_dwell_s;
-	uint8_t imu_dwell_s;
-	uint8_t mic_dwell_s;
-	uint8_t view_override;       /* 0=auto, 1=dashboard, 2=mic */
-	uint8_t qr_enable;
-	uint8_t contrast;
-	uint8_t invert;
-	uint8_t display_sleep_min;   /* 0=never */
-	uint8_t led_enable;          /* 0=off, 1=on */
-	uint8_t deepsleep_enable;    /* 0=off(default), 1=on */
-	uint8_t deepsleep_interval;  /* 0=10s, 1=1min, 2=10min, 3=1h, 4=10h, 5=24h */
-	uint8_t deepsleep_oled;      /* 0=off, 1=standby */
-} __packed;
+/* OLED Settings struct defined in audio_stream.h */
 
 static struct oled_settings oled_settings = {
 	.beacon_dwell_s = 2,
 	.qr_dwell_s = 10,
-	.imu_dwell_s = 5,
+	.imu_dwell_s = 8,
+	.power_dwell_s = 5,
 	.mic_dwell_s = 5,
 	.view_override = 0,
 	.qr_enable = 1,
@@ -128,6 +124,7 @@ static struct oled_settings oled_settings = {
 	.deepsleep_enable = 0,
 	.deepsleep_interval = 1,
 	.deepsleep_oled = 0,
+	.tx_power = 0,
 };
 
 static uint64_t oled_last_activity;
@@ -185,18 +182,23 @@ static void oled_check_sleep(void);
 static void enter_deep_sleep(uint32_t sec);
 static void wake_from_deep_sleep(void);
 static void oled_clear(void);
-static void oled_puts(uint16_t x, uint16_t y, const char *str);
+static void oled_puts(int16_t x, int16_t y, const char *str);
 static void oled_flush(void);
+static void oled_apply_settings(void);
+static void update_tx_power_based_on_battery_impl(void);
 static int oled_init(void);
 static k_tid_t main_thread_id;
 
 /* OLED + BT state */
 static bool bt_connected_flag;
+static bool adv_should_run = true;
 static uint8_t oled_phase;
 static struct k_work_delayable oled_work;
 static uint8_t oled_sub_phase;
 static uint64_t imu_view_start;
 static uint64_t mic_view_start;
+static uint64_t page_start_time;
+
 
 /* Phase definitions */
 #define PHASE_WELCOME   0
@@ -297,54 +299,74 @@ static struct bt_conn_auth_info_cb auth_info_cb = {
 	.pairing_failed = pairing_failed,
 };
 
-/* Set TX Power via Nordic HCI VS Command */
+/* Set TX Power via SDC direct API (avoids HCI transport deadlock during active connections) */
 static int set_bt_tx_power(int8_t power_dbm) {
-    struct net_buf *buf, *rsp = NULL;
-    struct bt_hci_cp_vs_write_tx_power_level *cp;
-    struct bt_hci_rp_vs_write_tx_power_level *rp;
-    int err;
+    uint8_t ret;
+    sdc_hci_cmd_vs_zephyr_write_tx_power_t params;
+    sdc_hci_cmd_vs_zephyr_write_tx_power_return_t resp;
 
-    /* Create HCI Command (Vendor Specific for nRF) */
-    buf = bt_hci_cmd_create(BT_HCI_OP_VS_WRITE_TX_POWER_LEVEL, sizeof(*cp));
-    if (!buf) {
-        printk("Unable to allocate command buffer\n");
-        return -ENOBUFS;
+    params.handle_type = SDC_HCI_VS_TX_POWER_HANDLE_TYPE_ADV;
+    params.handle = 0;
+    params.tx_power_level = power_dbm;
+
+    ret = sdc_hci_cmd_vs_zephyr_write_tx_power(&params, &resp);
+    if (ret) {
+        printk("TX Power (ADV) SDC failed: 0x%02x\n", ret);
+    } else {
+        printk("TX Power (ADV): selected=%d dBm (req=%d dBm)\n",
+               resp.selected_tx_power, power_dbm);
+        tx_power_level = resp.selected_tx_power;
     }
 
-    cp = net_buf_add(buf, sizeof(*cp));
-    cp->handle_type = BT_HCI_VS_LL_HANDLE_TYPE_ADV; /* Advertising Set */
-    cp->handle = 0; /* Default handle */
-    cp->tx_power_level = power_dbm;
-
-    err = bt_hci_cmd_send_sync(BT_HCI_OP_VS_WRITE_TX_POWER_LEVEL, buf, &rsp);
-    if (err) {
-        printk("Set TX Power HCI failed (%d), assuming static config. Target: %d dBm\n", err, power_dbm);
-        tx_power_level = power_dbm;
-        return 0; // Fake success to continue logic
+    params.handle_type = SDC_HCI_VS_TX_POWER_HANDLE_TYPE_CONN;
+    ret = sdc_hci_cmd_vs_zephyr_write_tx_power(&params, &resp);
+    if (ret) {
+        printk("TX Power (CONN) SDC failed: 0x%02x\n", ret);
+    } else {
+        printk("TX Power (CONN): selected=%d dBm (req=%d dBm)\n",
+               resp.selected_tx_power, power_dbm);
+        tx_power_level = resp.selected_tx_power;
     }
 
-    if (rsp) {
-        rp = (void *)rsp->data;
-        printk("Set TX Power success. Selected: %d dBm\n", rp->selected_tx_power);
-        tx_power_level = rp->selected_tx_power; /* Update global variable for reporting */
-        net_buf_unref(rsp);
-    }
     return 0;
 }
 
+/* ADC filter globals */
 static int16_t sample_buffer[1];
 static struct adc_sequence sequence = {
 	.buffer = sample_buffer,
 	.buffer_size = sizeof(sample_buffer),
 };
-
-/* Filter storage */
 #define FILTER_SIZE 12
 static int32_t adc_history[FILTER_SIZE] = {0};
 static int filter_idx = 0;
 static bool filter_full = false;
 
+/* ── Persist OLED settings to flash via Zephyr settings subsystem ── */
+#define SETTINGS_KEY_OLED "skynet/oled"
+
 static void ccc_cfg_changed(const struct bt_gatt_attr *attr, uint16_t value) {}
+
+static int settings_set_oled(const char *key, size_t len, settings_read_cb read_cb, void *cb_arg)
+{
+	if (strcmp(key, "oled") != 0) return 0;
+	ssize_t sz = read_cb(cb_arg, &oled_settings, sizeof(oled_settings));
+	if (sz < 0) return sz;
+	oled_apply_settings();
+	printk("OLED settings restored from flash\n");
+	return 0;
+}
+
+static int settings_export_oled(int (*cb)(const char *name, const void *value, size_t val_len))
+{
+	return cb(SETTINGS_KEY_OLED, &oled_settings, sizeof(oled_settings));
+}
+
+static struct settings_handler skynet_settings = {
+	.name = "skynet",
+	.h_set = settings_set_oled,
+	.h_export = settings_export_oled,
+};
 
 static ssize_t read_tx_power(struct bt_conn *conn, const struct bt_gatt_attr *attr,
 			     void *buf, uint16_t len, uint16_t offset)
@@ -379,6 +401,15 @@ static ssize_t write_reset(struct bt_conn *conn, const struct bt_gatt_attr *attr
 		printk("WAKE FROM DEEP SLEEP VIA RESET CHAR\n");
 		wake_from_deep_sleep();
 	}
+	if (val == 5) {
+		printk("FORCE DISCONNECT + RESTART ADVERTISING\n");
+		bt_connected_flag = false;
+		adv_should_run = true;
+		oled_phase = PHASE_BEACON;
+		oled_sub_phase = 0;
+		k_work_reschedule_for_queue(&oled_work_q, &oled_work, K_NO_WAIT);
+		start_advertising();
+	}
 	return len;
 }
 
@@ -407,6 +438,7 @@ static ssize_t write_oled_settings(struct bt_conn *conn, const struct bt_gatt_at
 {
 	if (offset + len > sizeof(oled_settings))
 		return BT_GATT_ERR(BT_ATT_ERR_INVALID_OFFSET);
+	int8_t old_tx = oled_settings.tx_power;
 	memcpy((uint8_t *)&oled_settings + offset, buf, len);
 	oled_apply_settings();
 	k_work_reschedule_for_queue(&oled_work_q, &oled_work, K_NO_WAIT);
@@ -414,7 +446,24 @@ static ssize_t write_oled_settings(struct bt_conn *conn, const struct bt_gatt_at
 		k_work_cancel_delayable(&deepsleep_work);
 		printk("Deepsleep disabled\n");
 	}
-	printk("OLED settings updated\n");
+	if (oled_settings.tx_power != 0 || old_tx != 0) {
+		/* Re-evaluate TX power via battery workqueue (correct async context) */
+		k_work_reschedule(&batt_work, K_NO_WAIT);
+	}
+	settings_save_one(SETTINGS_KEY_OLED, &oled_settings, sizeof(oled_settings));
+	printk("OLED settings updated and saved to flash\n");
+	return len;
+}
+
+static ssize_t write_live_audio_ctrl(struct bt_conn *conn,
+				     const struct bt_gatt_attr *attr,
+				     const void *buf, uint16_t len,
+				     uint16_t offset, uint8_t flags)
+{
+	if (len != 1) return BT_GATT_ERR(BT_ATT_ERR_INVALID_ATTRIBUTE_LEN);
+	uint8_t val = ((uint8_t *)buf)[0];
+	live_audio_active = (val != 0);
+	printk("Live Audio: %s\n", live_audio_active ? "START" : "STOP");
 	return len;
 }
 
@@ -428,6 +477,8 @@ BT_GATT_SERVICE_DEFINE(custom_svc,
 	BT_GATT_CCC(ccc_cfg_changed, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
 	BT_GATT_CHARACTERISTIC(BT_UUID_AUDIO_CHRC, BT_GATT_CHRC_NOTIFY, BT_GATT_PERM_READ, NULL, NULL, NULL),
 	BT_GATT_CCC(ccc_cfg_changed, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
+	BT_GATT_CHARACTERISTIC(BT_UUID_AUDIO_STREAM_CHRC, BT_GATT_CHRC_NOTIFY, BT_GATT_PERM_READ, NULL, NULL, NULL),
+	BT_GATT_CCC(ccc_cfg_changed, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
 	BT_GATT_CHARACTERISTIC(BT_UUID_TX_POWER_CHRC, BT_GATT_CHRC_READ | BT_GATT_CHRC_NOTIFY, BT_GATT_PERM_READ, read_tx_power, NULL, NULL),
 	BT_GATT_CCC(ccc_cfg_changed, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
 	BT_GATT_CHARACTERISTIC(BT_UUID_BATTERY_CHRC, BT_GATT_CHRC_READ | BT_GATT_CHRC_NOTIFY, BT_GATT_PERM_READ, read_battery, NULL, NULL),
@@ -435,6 +486,8 @@ BT_GATT_SERVICE_DEFINE(custom_svc,
 	BT_GATT_CHARACTERISTIC(BT_UUID_RESET_CHRC, BT_GATT_CHRC_WRITE, BT_GATT_PERM_WRITE, NULL, write_reset, NULL),
 	BT_GATT_CHARACTERISTIC(BT_UUID_OLED_SETTINGS_CHRC, BT_GATT_CHRC_READ | BT_GATT_CHRC_WRITE,
 			       BT_GATT_PERM_READ | BT_GATT_PERM_WRITE, read_oled_settings, write_oled_settings, &oled_settings),
+	BT_GATT_CHARACTERISTIC(BT_UUID_LIVE_AUDIO_CTRL_CHRC, BT_GATT_CHRC_WRITE,
+			       BT_GATT_PERM_WRITE, NULL, write_live_audio_ctrl, NULL),
 );
 
 /* --- Calibration & Timing --- */
@@ -485,19 +538,30 @@ static void read_battery_voltage_impl(void)
 		
 		/* 4. Kalibrierung anwenden */
 		val_mv = (int32_t)((float)val_mv * calibration_factor);
-		
-		/* 5. SMA Filter (Langzeit-Glättung) */
-		adc_history[filter_idx] = val_mv;
-		filter_idx = (filter_idx + 1) % FILTER_SIZE;
-		if (filter_idx == 0) filter_full = true;
-		
-		int32_t sum = 0;
-		int count = filter_full ? FILTER_SIZE : filter_idx;
-		for (int i = 0; i < count; i++) {
-			sum += adc_history[i];
+
+		int32_t old_val = (int32_t)battery_status.voltage_mv;
+
+		/* 5. Bei erstmaligem oder großem Sprung (>500mV) SMA-Filter sofort füllen */
+		if (old_val == 0 || abs(val_mv - old_val) > 500) {
+			for (int i = 0; i < FILTER_SIZE; i++) {
+				adc_history[i] = val_mv;
+			}
+			filter_idx = 0;
+			filter_full = true;
+		} else {
+			/* SMA Filter (Langzeit-Glättung) */
+			adc_history[filter_idx] = val_mv;
+			filter_idx = (filter_idx + 1) % FILTER_SIZE;
+			if (filter_idx == 0) filter_full = true;
+
+			int32_t sum = 0;
+			int count = filter_full ? FILTER_SIZE : filter_idx;
+			for (int i = 0; i < count; i++) {
+				sum += adc_history[i];
+			}
+			val_mv = sum / count;
 		}
-		val_mv = sum / count;
-		
+
 		battery_status.voltage_mv = (uint16_t)val_mv;
 
 		/* SoC Logic: 3.3V to 4.15V LiPo range */
@@ -509,6 +573,12 @@ static void read_battery_voltage_impl(void)
 
 static void update_tx_power_based_on_battery_impl(void)
 {
+	if (oled_settings.tx_power != 0) {
+		if (tx_power_level != oled_settings.tx_power) {
+			set_bt_tx_power(oled_settings.tx_power);
+		}
+		return;
+	}
 	/* High power if > 20% OR on external power */
 	int8_t target_power;
 	if (battery_status.soc < 20 && battery_status.status == 0) {
@@ -528,7 +598,7 @@ static void update_tx_power_based_on_battery_impl(void)
 }
 
 static uint32_t generated_passkey = 0;
-static char device_name_with_pin[32] = "Skynet AI Beacon";
+static char device_name_with_pin[32] = "Skynet AI Beacon"; /* Wird überschrieben, bleibt als Fallback */
 
 static struct bt_data ad[] = {
 	BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
@@ -550,8 +620,10 @@ static void connected(struct bt_conn *conn, uint8_t err)
 	} else {
 		printk("Connected.\n");
 		bt_connected_flag = true;
+		adv_should_run = false;
 		oled_phase = PHASE_CONNECTED;
 		oled_sub_phase = 0;
+		page_start_time = k_uptime_get();
 		imu_view_start = k_uptime_get();
 		oled_check_sleep();
 		k_work_reschedule_for_queue(&oled_work_q, &oled_work, K_NO_WAIT);
@@ -562,6 +634,7 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
 {
 	printk("Disconnected (reason 0x%02x)\n", reason);
 	bt_connected_flag = false;
+	adv_should_run = true;
 	oled_phase = PHASE_BEACON;
 	oled_sub_phase = 0;
 	k_work_reschedule_for_queue(&oled_work_q, &oled_work, K_NO_WAIT);
@@ -584,19 +657,26 @@ static struct bt_conn_cb conn_callbacks_phy = {
 
 static void start_advertising(void)
 {
+	int err;
+
+	err = bt_le_adv_stop();
+	if (err < 0 && err != -EALREADY) {
+		printk("Adv stop err: %d\n", err);
+	}
+
+	k_sleep(K_MSEC(50));
+
 	struct bt_le_adv_param adv_param = {
 		.id = BT_ID_DEFAULT,
 		.sid = 0,
-		.options = (1UL << 0) | (1UL << 2), /* BT_LE_ADV_OPT_CONNECTABLE | BT_LE_ADV_OPT_USE_NAME */
+		.options = BT_LE_ADV_OPT_CONN,
 		.interval_min = BT_GAP_ADV_FAST_INT_MIN_2,
 		.interval_max = BT_GAP_ADV_FAST_INT_MAX_2,
 	};
 
-	int err = bt_le_adv_start(&adv_param, ad, ARRAY_SIZE(ad), sd, ARRAY_SIZE(sd));
+	err = bt_le_adv_start(&adv_param, ad, ARRAY_SIZE(ad), sd, ARRAY_SIZE(sd));
 	if (err) {
-		if (err != -EALREADY) {
-			printk("Advertising failed to start (err %d)\n", err);
-		}
+		printk("Advertising failed to start (err %d)\n", err);
 	} else {
 		printk("Advertising started. Skynet Beacon is visible.\n");
 	}
@@ -649,15 +729,10 @@ static void bt_ready_init(void)
 
 static int32_t my_sensor_value_to_milli(const struct sensor_value *val) { return (val->val1 * 1000) + (val->val2 / 1000); }
 
-/* --- Audio Thread --- */
-#define AUDIO_SAMPLE_RATE 16000
-#define AUDIO_SAMPLES_PER_BLOCK 512
-#define AUDIO_BLOCK_SIZE (AUDIO_SAMPLES_PER_BLOCK * sizeof(int16_t))
-K_MEM_SLAB_DEFINE(audio_mem_slab, AUDIO_BLOCK_SIZE, 24, 4);
+/* --- Audio Streaming --- */
+K_MEM_SLAB_DEFINE(audio_mem_slab, 1024, 24, 4);
 
-static struct k_thread audio_thread_data;
 static struct k_thread sensor_thread_data;
-K_THREAD_STACK_DEFINE(audio_stack, 2048);
 K_THREAD_STACK_DEFINE(sensor_stack, 2048);
 
 /* Deepsleep: OLED-only cycling, threads keep running for BLE stability */
@@ -713,129 +788,6 @@ static void wake_from_deep_sleep(void)
 	k_work_reschedule_for_queue(&oled_work_q, &oled_work, K_NO_WAIT);
 	k_wakeup(main_thread_id);
 	printk("WAKE FROM DEEP SLEEP completed\n");
-}
-
-static void audio_thread(void *p1, void *p2, void *p3)
-{
-	void *buffer;
-	size_t size;
-	int ret;
-	uint32_t val_u32;
-
-	if (device_is_ready(gpio1_dev)) {
-		gpio_pin_configure(gpio1_dev, SENSE_PWR_PIN, GPIO_OUTPUT_HIGH);
-		gpio_pin_set(gpio1_dev, SENSE_PWR_PIN, 1);
-		k_msleep(100);
-	} else {
-		printk("AUDIO: gpio1_dev not ready\n");
-	}
-
-	if (!device_is_ready(mic_dev)) {
-		printk("AUDIO: mic_dev not ready\n");
-		return;
-	}
-
-	struct pcm_stream_cfg stream_cfg = {
-		.pcm_rate = AUDIO_SAMPLE_RATE,
-		.pcm_width = 16,
-		.block_size = AUDIO_BLOCK_SIZE,
-		.mem_slab = &audio_mem_slab,
-	};
-
-	struct dmic_cfg cfg;
-	memset(&cfg, 0, sizeof(cfg));
-	cfg.io.min_pdm_clk_freq = 1000000;
-	cfg.io.max_pdm_clk_freq = 3200000;
-	cfg.streams = &stream_cfg;
-	cfg.channel.req_chan_map_lo = dmic_build_channel_map(0, 0, PDM_CHAN_LEFT);
-	cfg.channel.req_num_chan = 1;
-	cfg.channel.req_num_streams = 1;
-
-	if (dmic_configure(mic_dev, &cfg) < 0) {
-		printk("AUDIO: dmic_configure failed\n");
-		return;
-	}
-	if (dmic_trigger(mic_dev, DMIC_TRIGGER_START) < 0) {
-		printk("AUDIO: dmic_trigger failed\n");
-		return;
-	}
-	printk("AUDIO: PDM started, waiting for samples\n");
-
-	while (1) {
-		ret = dmic_read(mic_dev, 0, &buffer, &size, SYS_FOREVER_MS);
-		if (ret != 0) {
-			printk("DMIC Read Error: %d\n", ret);
-			k_msleep(10);
-			continue;
-		}
-		
-		if (ret == 0) {
-			int16_t *samples = (int16_t *)buffer;
-			uint32_t count = size / sizeof(int16_t);
-			
-			double sum_sq = 0;
-			uint32_t zero_crossings = 0;
-			int16_t last_sample = 0;
-
-			for (uint32_t i = 0; i < count; i++) {
-				/* RMS Calculation */
-				double val = (double)samples[i] / 32768.0;
-				sum_sq += val * val;
-
-				/* Zero-Crossing Rate (ZCR) Calculation */
-				/* Check if the sign changed compared to the last sample, ignore exactly 0 to avoid noise jitter */
-				if (i > 0) {
-					if ((samples[i] > 0 && last_sample < 0) || (samples[i] < 0 && last_sample > 0)) {
-						zero_crossings++;
-					}
-				}
-				last_sample = samples[i];
-			}
-			
-			double rms = sqrt(sum_sq / (double)count);
-			
-			/* Pack data for BLE: [4 bytes RMS] [4 bytes ZCR] */
-			val_u32 = (uint32_t)(rms * 1000.0);
-			sys_put_le32(val_u32, &audio_level_buf[0]);
-			sys_put_le32(zero_crossings, &audio_level_buf[4]);
-			
-			/* RGB LED Audio Logic (Highly Smoothed for Fade-out effect) */
-			static double smoothed_rms = 0.0;
-			const double decay_factor = 0.885; /* Very slow fade-out */
-			const double attack_factor = 0.12; /* Smoother build-up */
-
-			if (rms > smoothed_rms) {
-				smoothed_rms = (attack_factor * rms) + ((1.0 - attack_factor) * smoothed_rms);
-			} else {
-				smoothed_rms *= decay_factor;
-			}
-
-			if (oled_settings.led_enable && gpio_is_ready_dt(&led_red_spec) && gpio_is_ready_dt(&led_green_spec) && gpio_is_ready_dt(&led_blue_spec)) {
-				if (smoothed_rms < 0.004) { /* Silence */
-					gpio_pin_set_dt(&led_red_spec, 0); gpio_pin_set_dt(&led_green_spec, 0); gpio_pin_set_dt(&led_blue_spec, 0);
-				} else if (smoothed_rms < 0.012) { /* Low: Cyan/Blue */
-					gpio_pin_set_dt(&led_red_spec, 0); gpio_pin_set_dt(&led_green_spec, 1); gpio_pin_set_dt(&led_blue_spec, 1);
-				} else if (smoothed_rms < 0.025) { /* Mid: Green */
-					gpio_pin_set_dt(&led_red_spec, 0); gpio_pin_set_dt(&led_green_spec, 1); gpio_pin_set_dt(&led_blue_spec, 0);
-				} else if (smoothed_rms < 0.045) { /* High: Yellow */
-					gpio_pin_set_dt(&led_red_spec, 1); gpio_pin_set_dt(&led_green_spec, 1); gpio_pin_set_dt(&led_blue_spec, 0);
-				} else { /* Peak: Red */
-					gpio_pin_set_dt(&led_red_spec, 1); gpio_pin_set_dt(&led_green_spec, 0); gpio_pin_set_dt(&led_blue_spec, 0);
-				}
-			}
-
-			if (deepsleep_send_once_audio) {
-				deepsleep_send_once_audio = false;
-				bt_gatt_notify(NULL, &custom_svc.attrs[IDX_AUDIO_VAL], audio_level_buf, sizeof(audio_level_buf));
-			} else if (bt_connected_flag && !deepsleep_block_notify) {
-				bt_gatt_notify(NULL, &custom_svc.attrs[IDX_AUDIO_VAL], audio_level_buf, sizeof(audio_level_buf));
-			}
-			k_mem_slab_free(&audio_mem_slab, buffer);
-			if (k_uptime_get_32() % 1000 < 50) {
-				printk("Mic RMS: %u\n", val_u32);
-			}
-		}
-	}
 }
 
 static void sensor_thread(void *p1, void *p2, void *p3)
@@ -936,31 +888,35 @@ static int setup_nfc(void)
 }
 
 /* --- OLED Display Functions --- */
-static void oled_set_pixel(uint16_t x, uint16_t y, uint8_t on)
+static void oled_set_pixel(int16_t x, int16_t y, uint8_t on)
 {
-	if (x >= OLED_W || y >= OLED_H) return;
-	uint16_t page = y / 8;
-	uint8_t bit = y % 8;
-	uint16_t idx = page * OLED_W + x;
+	if (x < 0 || x >= OLED_W || y < 0 || y >= OLED_H) return;
+	uint16_t page = (uint16_t)y / 8;
+	uint8_t bit = (uint8_t)(y % 8);
+	uint16_t idx = page * OLED_W + (uint16_t)x;
 	if (on) oled_fb[idx] |= (1 << bit);
 	else    oled_fb[idx] &= ~(1 << bit);
 }
 
-static void oled_putc_w(uint16_t x, uint16_t y, char c, uint8_t w)
+static void oled_putc_w(int16_t x, int16_t y, char c, uint8_t w)
 {
 	if (c < 0x20 || c > 0x7E) c = ' ';
 	if (w > 8) w = 8;
 	uint8_t idx = c - 0x20;
-	for (int row = 0; row < 8 && (y + row) < OLED_H; row++) {
+	for (int row = 0; row < 8; row++) {
+		int16_t cy = y + row;
+		if (cy < 0 || cy >= OLED_H) continue;
 		uint8_t bits = font8x8[idx][row];
-		for (int col = 0; col < w && (x + col) < OLED_W; col++) {
-			if (bits & (1 << (7 - col)))
-				oled_set_pixel(x + col, y + row, 1);
+		for (int col = 0; col < w; col++) {
+			int16_t cx = x + col;
+			if (cx >= OLED_W) break;
+			if (cx >= 0 && (bits & (1 << (7 - col))))
+				oled_set_pixel(cx, cy, 1);
 		}
 	}
 }
 
-static void oled_puts_w(uint16_t x, uint16_t y, const char *str, uint8_t w)
+static void oled_puts_w(int16_t x, int16_t y, const char *str, uint8_t w)
 {
 	while (*str) {
 		oled_putc_w(x, y, *str, w);
@@ -970,30 +926,34 @@ static void oled_puts_w(uint16_t x, uint16_t y, const char *str, uint8_t w)
 	}
 }
 
-static void oled_putc(uint16_t x, uint16_t y, char c)
+static void oled_putc(int16_t x, int16_t y, char c)
 {
 	oled_putc_w(x, y, c, 8);
 }
 
-static void oled_puts(uint16_t x, uint16_t y, const char *str)
+static void oled_puts(int16_t x, int16_t y, const char *str)
 {
 	oled_puts_w(x, y, str, 8);
 }
 
-static void oled_putc_8x16(uint16_t x, uint16_t y, char c)
+static void oled_putc_8x16(int16_t x, int16_t y, char c)
 {
 	if (c < 0x20 || c > 0x7E) c = ' ';
 	uint8_t idx = c - 0x20;
-	for (int row = 0; row < 16 && (y + row) < OLED_H; row++) {
+	for (int row = 0; row < 16; row++) {
+		int16_t cy = y + row;
+		if (cy < 0 || cy >= OLED_H) continue;
 		uint8_t bits = font8x16[idx][row];
-		for (int col = 0; col < 8 && (x + col) < OLED_W; col++) {
-			if (bits & (1 << (7 - col)))
-				oled_set_pixel(x + col, y + row, 1);
+		for (int col = 0; col < 8; col++) {
+			int16_t cx = x + col;
+			if (cx >= OLED_W) break;
+			if (cx >= 0 && (bits & (1 << (7 - col))))
+				oled_set_pixel(cx, cy, 1);
 		}
 	}
 }
 
-static void oled_puts_8x16(uint16_t x, uint16_t y, const char *str)
+static void oled_puts_8x16(int16_t x, int16_t y, const char *str)
 {
 	while (*str) {
 		oled_putc_8x16(x, y, *str);
@@ -1101,16 +1061,6 @@ static void oled_update_display(void)
 	oled_flush();
 }
 
-static void fmt_val(char *buf, int32_t val)
-{
-	int neg = (val < 0);
-	if (neg) val = -val;
-	int ip = val / 1000;
-	int fp = (val % 1000 + 5) / 10;
-	if (fp >= 100) { ip++; fp = 0; }
-	snprintf(buf, 10, "%s%d.%02u", neg ? "-" : " ", ip, (unsigned int)fp);
-}
-
 /* --- OLED Mic PSD Visualization --- */
 #define PSD_BINS 112
 #define CHART_X 16
@@ -1165,43 +1115,117 @@ static void oled_update_mic(void)
 	oled_flush();
 }
 
-static void oled_update_connected(void)
+static void fmt_val_signed(char *buf, int32_t val)
 {
-	char buf[28], xs[10], ys[10], zs[10], gxs[10], gys[10], gzs[10];
+	int neg = (val < 0);
+	if (neg) val = -val;
+	int ip = val / 1000;
+	int fp = (val % 1000 + 5) / 10;
+	if (fp >= 100) { ip++; fp = 0; }
+	snprintf(buf, 10, "%s%d.%02u", neg ? "-" : "+", ip, (unsigned int)fp);
+}
 
-	oled_clear();
+/* ── Scroll state ── */
+#define SCROLL_STEPS 12
+#define SCROLL_MS 30
+static bool oled_scroll_active;
+static uint8_t oled_scroll_step;
+static uint8_t oled_scroll_from;
+static uint8_t oled_scroll_to;
+
+/* Cubic ease-out: slow start, fast middle, smooth stop */
+static int ease_out_cubic(int step, int total)
+{
+	float t = (float)step / total;
+	float eased = 1.0f - (1.0f - t) * (1.0f - t) * (1.0f - t);
+	return (int)(eased * total + 0.5f);
+}
+
+/* IMU page: Acc X/Y/Z + Battery */
+static void oled_render_imu_at(int y_offs)
+{
+	char buf[24], xs[10], ys[10], zs[10];
 
 	int32_t ax = (int32_t)sys_get_le32(&accel_data.data[0]);
 	int32_t ay = (int32_t)sys_get_le32(&accel_data.data[4]);
 	int32_t az = (int32_t)sys_get_le32(&accel_data.data[8]);
+
+	fmt_val_signed(xs, ax); fmt_val_signed(ys, ay); fmt_val_signed(zs, az);
+
+	snprintf(buf, sizeof(buf), "Acc X%sm/s2", xs);
+	oled_puts_8x16(0, 0 + y_offs, buf);
+	snprintf(buf, sizeof(buf), "Acc Y%sm/s2", ys);
+	oled_puts_8x16(0, 16 + y_offs, buf);
+	snprintf(buf, sizeof(buf), "Acc Z%sm/s2", zs);
+	oled_puts_8x16(0, 32 + y_offs, buf);
+	snprintf(buf, sizeof(buf), "Bat %umV %u%%", battery_status.voltage_mv, battery_status.soc);
+	oled_puts_8x16(0, 48 + y_offs, buf);
+}
+
+/* Gyro page: Gyr X, Y, Z each on own line + Power/TX */
+static void oled_render_power_at(int y_offs)
+{
+	char buf[24], gxs[10], gys[10], gzs[10];
+
 	int32_t gx = (int32_t)sys_get_le32(&gyro_data.data[0]);
 	int32_t gy = (int32_t)sys_get_le32(&gyro_data.data[4]);
 	int32_t gz = (int32_t)sys_get_le32(&gyro_data.data[8]);
 
-	fmt_val(xs, ax); fmt_val(ys, ay); fmt_val(zs, az);
-	fmt_val(gxs, gx); fmt_val(gys, gy); fmt_val(gzs, gz);
+	fmt_val_signed(gxs, gx); fmt_val_signed(gys, gy); fmt_val_signed(gzs, gz);
 
 	const char *pwr;
 	switch (battery_status.status) {
-	case 1:  pwr = "Charging";   break;
-	case 2:  pwr = "USB Power";  break;
-	default: pwr = "Battery";    break;
+	case 1:  pwr = "CHG";  break;
+	case 2:  pwr = "USB";  break;
+	default: pwr = "BAT";  break;
 	}
 
-	oled_puts_w(0, 0, "Acc.(m/s^2)", 6);
-	snprintf(buf, sizeof(buf), "X%s Y%s Z%s", xs, ys, zs);
-	oled_puts_w(0, 10, buf, 6);
+	snprintf(buf, sizeof(buf), "Gyr X%sd/s", gxs);
+	oled_puts_8x16(0, 0 + y_offs, buf);
+	snprintf(buf, sizeof(buf), "Gyr Y%sd/s", gys);
+	oled_puts_8x16(0, 16 + y_offs, buf);
+	snprintf(buf, sizeof(buf), "Gyr Z%sd/s", gzs);
+	oled_puts_8x16(0, 32 + y_offs, buf);
+	snprintf(buf, sizeof(buf), "P:%s TX %ddBm", pwr, tx_power_level);
+	oled_puts_8x16(0, 48 + y_offs, buf);
+}
 
-	oled_puts_w(0, 22, "Gyr.(deg/s)", 6);
-	snprintf(buf, sizeof(buf), "X%s Y%s Z%s", gxs, gys, gzs);
-	oled_puts_w(0, 32, buf, 6);
-
-	snprintf(buf, sizeof(buf), "BAT %umV %u%%", battery_status.voltage_mv, battery_status.soc);
-	oled_puts_w(0, 44, buf, 6);
-	snprintf(buf, sizeof(buf), "PWR %s TX %ddBm", pwr, tx_power_level);
-	oled_puts_w(0, 54, buf, 6);
-
+/* Static display wrappers */
+static void oled_show_imu(void)
+{
+	oled_clear();
+	oled_render_imu_at(0);
 	oled_flush();
+}
+
+static void oled_show_power(void)
+{
+	oled_clear();
+	oled_render_power_at(0);
+	oled_flush();
+}
+
+/* Scroll animation: new content scrolls DOWN from above into view.
+   Old content goes the opposite direction (UP) out of view. */
+
+static void oled_scroll_frame(void)
+{
+	int total = SCROLL_STEPS;
+	int pos = ease_out_cubic(oled_scroll_step, total);
+	int from_offs = -pos;           /* 0 → -64: old scrolls UP out (opposite of entry) */
+	int to_offs = pos - OLED_H;     /* -64 → 0: new scrolls DOWN into view from above */
+
+	oled_clear();
+	if (oled_scroll_from == 0) oled_render_imu_at(from_offs);
+	else oled_render_power_at(from_offs);
+	if (oled_scroll_to == 0) oled_render_imu_at(to_offs);
+	else oled_render_power_at(to_offs);
+	oled_flush();
+
+	oled_scroll_step++;
+	if (oled_scroll_step >= total) {
+		oled_scroll_active = false;
+	}
 }
 
 static void oled_check_sleep(void)
@@ -1239,27 +1263,89 @@ static void oled_work_handler(struct k_work *work)
 		k_work_reschedule_for_queue(&oled_work_q, &oled_work, K_SECONDS(2));
 	} else if (bt_connected_flag) {
 		oled_last_activity = k_uptime_get();
-		if (oled_sub_phase == 0) {
-			oled_update_connected();
+		uint64_t now = k_uptime_get();
+
+		/* During active scroll, advance animation step */
+		if (oled_scroll_active) {
+			oled_scroll_frame();
+			if (oled_scroll_active) {
+				k_work_reschedule_for_queue(&oled_work_q, &oled_work, K_MSEC(SCROLL_MS));
+			} else {
+				/* Scroll finished — show target page and start its timer */
+				page_start_time = now;
+				k_work_reschedule_for_queue(&oled_work_q, &oled_work, K_MSEC(150));
+			}
+		} else if (oled_sub_phase == 0) {
+			/* Acc page: Acc X/Y/Z + Battery */
+			oled_show_imu();
 			if (oled_settings.view_override == 2) {
-				mic_view_start = k_uptime_get();
-				oled_sub_phase = 1;
-			} else if (oled_settings.view_override == 1 || k_uptime_get() - imu_view_start < (int64_t)oled_settings.imu_dwell_s * 1000) {
-				;
+				oled_scroll_from = 0; oled_scroll_to = 2;
+				oled_scroll_step = 0; oled_scroll_active = true;
+				oled_sub_phase = 2;
+				k_work_reschedule_for_queue(&oled_work_q, &oled_work, K_NO_WAIT);
+			} else if (oled_settings.view_override == 1) {
+				if (now - page_start_time >= (uint64_t)oled_settings.imu_dwell_s * 1000) {
+					oled_scroll_from = 0; oled_scroll_to = 1;
+					oled_scroll_step = 0; oled_scroll_active = true;
+					oled_sub_phase = 1;
+					k_work_reschedule_for_queue(&oled_work_q, &oled_work, K_NO_WAIT);
+				} else {
+					k_work_reschedule_for_queue(&oled_work_q, &oled_work, K_MSEC(150));
+				}
 			} else {
-				mic_view_start = k_uptime_get();
-				oled_sub_phase = 1;
+				if (now - page_start_time >= (uint64_t)oled_settings.imu_dwell_s * 1000) {
+					oled_scroll_from = 0; oled_scroll_to = 1;
+					oled_scroll_step = 0; oled_scroll_active = true;
+					oled_sub_phase = 1;
+					k_work_reschedule_for_queue(&oled_work_q, &oled_work, K_NO_WAIT);
+				} else {
+					k_work_reschedule_for_queue(&oled_work_q, &oled_work, K_MSEC(150));
+				}
 			}
-			k_work_reschedule_for_queue(&oled_work_q, &oled_work, K_MSEC(150));
+		} else if (oled_sub_phase == 1) {
+			/* Gyro page: Gyr X/Y/Z (each own line) + Pwr/TX */
+			oled_show_power();
+			if (oled_settings.view_override == 2) {
+				oled_scroll_from = 1; oled_scroll_to = 2;
+				oled_scroll_step = 0; oled_scroll_active = true;
+				oled_sub_phase = 2;
+				k_work_reschedule_for_queue(&oled_work_q, &oled_work, K_NO_WAIT);
+			} else if (oled_settings.view_override == 1) {
+				if (now - page_start_time >= (uint64_t)oled_settings.power_dwell_s * 1000) {
+					oled_scroll_from = 1; oled_scroll_to = 0;
+					oled_scroll_step = 0; oled_scroll_active = true;
+					oled_sub_phase = 0;
+					k_work_reschedule_for_queue(&oled_work_q, &oled_work, K_NO_WAIT);
+				} else {
+					k_work_reschedule_for_queue(&oled_work_q, &oled_work, K_MSEC(150));
+				}
+			} else {
+				if (now - page_start_time >= (uint64_t)oled_settings.power_dwell_s * 1000) {
+					oled_scroll_from = 1; oled_scroll_to = 2;
+					oled_scroll_step = 0; oled_scroll_active = true;
+					oled_sub_phase = 2;
+					k_work_reschedule_for_queue(&oled_work_q, &oled_work, K_NO_WAIT);
+				} else {
+					k_work_reschedule_for_queue(&oled_work_q, &oled_work, K_MSEC(150));
+				}
+			}
 		} else {
+			/* Mic PSD page */
 			oled_update_mic();
-			if (oled_settings.view_override == 2 || k_uptime_get() - mic_view_start < (int64_t)oled_settings.mic_dwell_s * 1000) {
-				;
+			if (oled_settings.view_override == 2) {
+				/* Stay in mic */
+				k_work_reschedule_for_queue(&oled_work_q, &oled_work, K_MSEC(150));
 			} else {
-				imu_view_start = k_uptime_get();
-				oled_sub_phase = 0;
+				/* Auto or Dashboard: cycle back to IMU */
+				if (now - page_start_time >= (uint64_t)oled_settings.mic_dwell_s * 1000) {
+					oled_scroll_from = 2; oled_scroll_to = 0;
+					oled_scroll_step = 0; oled_scroll_active = true;
+					oled_sub_phase = 0;
+					k_work_reschedule_for_queue(&oled_work_q, &oled_work, K_NO_WAIT);
+				} else {
+					k_work_reschedule_for_queue(&oled_work_q, &oled_work, K_MSEC(150));
+				}
 			}
-			k_work_reschedule_for_queue(&oled_work_q, &oled_work, K_MSEC(150));
 		}
 	} else if (oled_phase == PHASE_QR && oled_settings.qr_enable) {
 		oled_draw_qr_code();
@@ -1311,9 +1397,10 @@ int main(void) {
 	printk("DEVICE UNIQUE PIN: %06u\n", generated_passkey);
 	printk("----------------------------------\n");
 
-	/* Settings müssen VOR bt_enable() geladen werden, damit die BT-Identität (BLE-Address)
-	   aus NVS restaured wird und nach Power-Cycle gleich bleibt */
-	if (IS_ENABLED(CONFIG_BT_SETTINGS)) {
+	/* Register custom settings handler and load settings from flash.
+	   Settings must load BEFORE bt_enable() so BT identity is restored. */
+	if (IS_ENABLED(CONFIG_SETTINGS)) {
+		settings_register(&skynet_settings);
 		settings_load();
 	}
 
@@ -1335,7 +1422,28 @@ int main(void) {
 	k_work_init(&adv_start_work, adv_start_handler);
 
 	bt_ready_init();
-	k_thread_create(&audio_thread_data, audio_stack, K_THREAD_STACK_SIZEOF(audio_stack), audio_thread, NULL, NULL, NULL, 2, K_FP_REGS, K_NO_WAIT);
+
+	{
+		static const struct audio_stream_config stream_cfg = {
+			.mic_dev = DEVICE_DT_GET(DT_ALIAS(mic)),
+			.gpio1_dev = DEVICE_DT_GET(DT_NODELABEL(gpio1)),
+			.led_red = &led_red_spec,
+			.led_green = &led_green_spec,
+			.led_blue = &led_blue_spec,
+			.audio_level_buf = audio_level_buf,
+			.mem_slab = &audio_mem_slab,
+			.gatt_attrs = custom_svc.attrs,
+			.audio_val_idx = IDX_AUDIO_VAL,
+			.audio_stream_val_idx = IDX_AUDIO_STREAM_VAL,
+			.bt_connected = &bt_connected_flag,
+			.deepsleep_block_notify = &deepsleep_block_notify,
+			.deepsleep_send_once_audio = &deepsleep_send_once_audio,
+			.live_audio_active = &live_audio_active,
+			.oled_settings = &oled_settings,
+		};
+		audio_stream_start(&stream_cfg);
+	}
+
 	k_thread_create(&sensor_thread_data, sensor_stack, K_THREAD_STACK_SIZEOF(sensor_stack), sensor_thread, NULL, NULL, NULL, 3, K_FP_REGS, K_NO_WAIT);
 
 	/* Initialize and start periodic battery monitoring */
@@ -1383,6 +1491,9 @@ int main(void) {
 			deepsleep_oled_wake();
 			k_work_reschedule_for_queue(&oled_work_q, &oled_work, K_NO_WAIT);
 		} else {
+			if (adv_should_run && !bt_connected_flag) {
+				start_advertising();
+			}
 			k_msleep(500);
 		}
 	}

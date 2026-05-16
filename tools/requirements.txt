@@ -1,0 +1,10 @@
+bleak>=0.21.0
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+websockets>=12.0
+ollama>=0.1.9
+faster-whisper>=1.0.0
+python-multipart>=0.0.6
+playwright>=1.40.0
+pyautogui>=0.9.54
+pycaw>=0.3.1

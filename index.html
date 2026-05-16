@@ -230,6 +230,31 @@
         .settings-actions { display: flex; gap: 12px; margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border); }
         .settings-actions button { flex: 1; padding: 10px; font-size: 0.8rem; }
         .contrast-value { min-width: 30px; text-align: center; font-family: 'JetBrains Mono'; font-size: 0.85rem; color: var(--primary); }
+
+        .backend-bar { display: flex; align-items: center; gap: 12px; padding: 12px 20px; background: var(--card); border-radius: 12px; border: 1px solid var(--border); flex-wrap: wrap; }
+        .backend-bar input { background: #0a0f14; border: 1px solid var(--border); border-radius: 6px; color: var(--text); padding: 8px 12px; font-family: 'JetBrains Mono'; font-size: 0.85rem; width: 100px; }
+        .backend-bar input:focus { border-color: var(--primary); outline: none; }
+        .backend-status { font-family: 'JetBrains Mono'; font-size: 0.75rem; color: var(--text-dim); }
+        .audio-controls { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+        .audio-controls button { padding: 8px 18px; font-size: 0.75rem; border-width: 1px; }
+        .gain-row { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
+        .gain-row input[type="range"] { flex: 1; accent-color: var(--primary); max-width: 200px; }
+        .gain-label { font-family: 'JetBrains Mono'; font-size: 0.85rem; color: var(--primary); min-width: 50px; text-align: right; }
+        .waveform-container { height: 80px; width: 100%; background: #010203; border: 1px solid #1a222b; border-radius: 8px; margin-bottom: 6px; overflow: hidden; }
+        .recording-duration { font-family: 'JetBrains Mono'; font-size: 0.75rem; color: var(--text-dim); }
+        .stt-output { background: #0a0f14; border: 1px solid var(--border); border-radius: 8px; padding: 12px; min-height: 80px; max-height: 150px; overflow-y: auto; font-family: 'JetBrains Mono'; font-size: 0.85rem; color: var(--text); margin-bottom: 8px; white-space: pre-wrap; }
+        .stt-output .partial { color: var(--text-dim); font-style: italic; }
+        .chat-container { display: flex; flex-direction: column; height: 250px; }
+        .chat-messages { flex: 1; overflow-y: auto; background: #0a0f14; border: 1px solid var(--border); border-radius: 8px; padding: 10px; margin-bottom: 8px; display: flex; flex-direction: column; gap: 8px; }
+        .chat-msg { font-size: 0.8rem; line-height: 1.4; padding: 6px 10px; border-radius: 8px; max-width: 85%; }
+        .chat-msg.user { background: rgba(0,242,255,0.1); border: 1px solid rgba(0,242,255,0.2); align-self: flex-end; color: var(--primary); }
+        .chat-msg.ai { background: rgba(40,167,69,0.1); border: 1px solid rgba(40,167,69,0.2); align-self: flex-start; color: var(--green); }
+        .chat-msg.system { background: rgba(255,204,0,0.1); border: 1px solid rgba(255,204,0,0.2); align-self: center; color: var(--audio); font-style: italic; font-size: 0.75rem; }
+        .chat-input-row { display: flex; gap: 8px; }
+        .chat-input-row input { flex: 1; background: #0a0f14; border: 1px solid var(--border); border-radius: 6px; color: var(--text); padding: 8px 12px; font-family: 'JetBrains Mono'; font-size: 0.85rem; }
+        .chat-input-row input:focus { border-color: var(--primary); outline: none; }
+        .chat-input-row button { padding: 8px 16px; font-size: 0.75rem; border-width: 1px; }
+
         @media (max-width: 480px) {
             .modal-panel { padding: 20px; width: 95%; }
             .setting-row { flex-direction: column; align-items: flex-start; gap: 8px; }
@@ -266,7 +291,7 @@
         </div>
 
         <div style="display: flex; flex-direction: column; align-items: center; gap: 10px;">
-            <button id="connect-btn">Initiate Tactical Uplink</button>
+            <button id="connect-btn">CONNECT TO nRF52</button>
             <button id="reset-btn" class="btn-danger" style="display: none;">DANGER: RESET TO BOOTLOADER</button>
             <button id="deepsleep-btn" class="btn-deepsleep" style="display: none;">💤 ACTIVATE DEEP SLEEP</button>
             <div id="reconnect-status" style="font-size: 0.7rem; color: var(--accent); min-height: 1.2em;"></div>
@@ -331,7 +356,14 @@
                 <div class="setting-row">
                     <span class="setting-label">IMU View <small>Accel/Gyro data (connected)</small></span>
                     <div class="setting-control">
-                        <input type="number" id="set-imu-dwell" min="1" max="60" value="5">
+                        <input type="number" id="set-imu-dwell" min="1" max="60" value="8">
+                        <span style="font-size:0.75rem;color:var(--text-dim);">sec</span>
+                    </div>
+                </div>
+                <div class="setting-row">
+                    <span class="setting-label">Power View <small>Gyro YZ + Battery + Power (connected)</small></span>
+                    <div class="setting-control">
+                        <input type="number" id="set-power-dwell" min="1" max="60" value="5">
                         <span style="font-size:0.75rem;color:var(--text-dim);">sec</span>
                     </div>
                 </div>
@@ -347,7 +379,7 @@
             <div class="settings-section">
                 <h3>View Mode (connected)</h3>
                 <div class="setting-row">
-                    <span class="setting-label">Active View <small>Auto cycles between Dashboard + Mic PSD</small></span>
+                    <span class="setting-label">Active View <small>Auto: IMU+Power+Mic | Dashboard: IMU+Power | Mic only</small></span>
                     <div class="setting-control" style="gap: 16px;">
                         <label style="display:flex;align-items:center;gap:4px;font-size:0.8rem;cursor:pointer;">
                             <input type="radio" name="view-mode" value="0" checked> Auto
@@ -444,6 +476,27 @@
                 </div>
             </div>
 
+            <div class="settings-section">
+                <h3>TX Power</h3>
+                <div class="setting-row">
+                    <span class="setting-label">TX Power <small>0 = auto (based on battery), -40..+8 dBm manual</small></span>
+                    <div class="setting-control">
+                        <select id="set-tx-power" style="background:#0a0f14;border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:'JetBrains Mono';padding:5px 8px;font-size:0.85rem;">
+                            <option value="0">Auto (battery)</option>
+                            <option value="-40">-40 dBm (100 nW)</option>
+                            <option value="-20">-20 dBm (10 &micro;W)</option>
+                            <option value="-12">-12 dBm (63 &micro;W)</option>
+                            <option value="-8">-8 dBm (158 &micro;W)</option>
+                            <option value="-4">-4 dBm (398 &micro;W)</option>
+                            <option value="0">0 dBm (1.0 mW)</option>
+                            <option value="4">+4 dBm (2.5 mW)</option>
+                            <option value="8">+8 dBm (6.3 mW)</option>
+                            <option value="12">+12 dBm (15.8 mW)</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+
             <div class="settings-section" style="border-top:1px solid var(--border);padding-top:12px;margin-bottom:0;">
                 <h3>System Info</h3>
                 <div class="setting-row">
@@ -467,6 +520,7 @@
                     <span style="font-family:'JetBrains Mono';font-size:0.8rem;color:var(--text-dim);">nRF52840 BLE Sensor Hub v1.0</span>
                 </div>
             </div>
+
             <div class="settings-actions">
                 <button id="settings-save" style="background:var(--primary);color:var(--bg);border-color:var(--primary);">Save Settings</button>
                 <button id="settings-cancel">Cancel</button>
@@ -511,7 +565,7 @@
             <div class="digital-readout" style="color: var(--primary);">
                 <span id="rssi-val">--</span><span class="unit">dBm</span>
             </div>
-            <div class="unit-row"><span id="tx-mw">--</span> mW | <span id="tx-status" style="color: var(--primary);">HIGH POWER</span></div>
+            <div class="unit-row"><span id="tx-mw">--</span> | <span id="tx-status" style="color: var(--primary);">HIGH POWER</span></div>
         </div>
         <div class="card">
             <h2>Power Management</h2>
@@ -563,6 +617,61 @@
         </div>
     </div>
 
+    <div class="backend-bar">
+        <span style="font-size:0.75rem;text-transform:uppercase;letter-spacing:1.5px;color:var(--text-dim);">Audio Backend</span>
+        <input type="text" id="backend-host" value="localhost" placeholder="Host">
+        <input type="number" id="backend-port" value="8765" placeholder="Port" min="1" max="65535">
+        <button id="backend-connect-btn" style="padding:6px 16px;font-size:0.7rem;">Connect</button>
+        <span class="backend-status" id="backend-status">Disconnected</span>
+        <span style="width:1px;height:24px;background:var(--border);margin:0 4px;"></span>
+        <span style="font-size:0.75rem;text-transform:uppercase;letter-spacing:1.5px;color:var(--text-dim);">BLE</span>
+        <button id="ble-connect-btn" style="padding:6px 16px;font-size:0.7rem;border-color:var(--text-dim);color:var(--text-dim);">nRF52</button>
+        <button id="ble-scan-btn" class="btn-sm" style="display:none;border-color:var(--text-dim);color:var(--text-dim);" disabled>Scan</button>
+        <span class="backend-status" id="ble-status"><span style="color:var(--text-dim);">Offline</span></span>
+    </div>
+
+    <div class="stats-grid">
+        <div class="card">
+            <h2>Audio Recording</h2>
+            <div class="audio-controls">
+                <button id="rec-ctrl-btn" disabled>Record</button>
+                <button id="play-ctrl-btn" disabled>Play</button>
+                <button id="testtone-btn" style="padding:8px 14px;font-size:0.7rem;border-color:var(--text-dim);color:var(--text-dim);">Test Tone</button>
+                <button id="assistant-toggle-btn" style="display:none;padding:8px 14px;font-size:0.7rem;" disabled>AI Mode: OFF</button>
+                <button id="live-audio-btn" disabled style="padding:8px 14px;font-size:0.7rem;border-color:var(--primary);color:var(--primary);">🔴 Live Audio</button>
+            </div>
+            <audio id="audio-player" style="display:none" controls></audio>
+            <div class="gain-row">
+                <span style="font-size:0.75rem;color:var(--text-dim);">Gain:</span>
+                <input type="range" id="gain-slider" min="0.1" max="100" step="0.1" value="8.0">
+                <span class="gain-label" id="gain-label">8.0x</span>
+            </div>
+            <div class="waveform-container">
+                <canvas id="waveformCanvas"></canvas>
+            </div>
+            <div class="recording-duration" id="recording-duration">Duration: 00:00</div>
+        </div>
+        <div class="card">
+            <h2>Speech-to-Text</h2>
+            <div class="stt-output" id="stt-output"><span style="color:var(--text-dim);">Waiting for speech...</span></div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                <button id="stt-process-btn" class="btn-sm" style="border-color:var(--audio);color:var(--audio);">Process Audio</button>
+                <button id="stt-auto-btn" class="btn-sm" style="border-color:var(--green);color:var(--green);">Auto-STT</button>
+            </div>
+        </div>
+        <div class="card">
+            <h2>AI Assistant <span id="assistant-badge" style="display:none;font-size:0.6rem;color:var(--green);border:1px solid var(--green);border-radius:4px;padding:2px 6px;margin-left:8px;">ACTIVE</span></h2>
+            <div class="chat-container">
+                <div class="chat-messages" id="chat-messages">
+                    <div class="chat-msg system">Connect to backend and enable --assistant to use AI.</div>
+                </div>
+                <div class="chat-input-row">
+                    <input type="text" id="chat-input" placeholder="Ask AI anything..." disabled>
+                    <button id="chat-send-btn" disabled>Send</button>
+                </div>
+            </div>
+        </div>
+    </div>
 
     <div style="display: flex; justify-content: center; gap: 20px; padding: 20px;">
         <button onclick="exportCSV()">Export Tactical Session (CSV)</button>
@@ -579,6 +688,36 @@
     const BATTERY_CHAR = '12345678-1234-5678-1234-56789abcdef5';
     const RESET_CHAR = '12345678-1234-5678-1234-56789abcdef6';
     const OLED_SETTINGS_CHAR = '12345678-1234-5678-1234-56789abcdef7';
+    const LIVE_AUDIO_CTRL_CHAR = '12345678-1234-5678-1234-56789abcdef9';
+    const AUDIO_STREAM_CHAR = '12345678-1234-5678-1234-56789abcdef8';
+
+    // IMA ADPCM Decoder
+    const ADPCM_STEP_TABLE = new Int32Array([7,8,9,10,11,12,13,14,16,17,19,21,23,25,28,31,34,37,41,45,50,55,60,66,73,80,88,97,107,118,130,143,157,173,190,209,230,253,279,307,337,371,408,449,494,544,598,658,724,796,876,963,1060,1166,1282,1411,1552,1707,1878,2066,2272,2499,2749,3024,3327,3660,4026,4428,4871,5358,5894,6484,7132,7845,8630,9493,10442,11487,12635,13899,15289,16818,18500,20350,22385,24623,27086,29794,32767]);
+    const ADPCM_IDX_ADJ = new Int8Array([-1,-1,-1,-1,2,4,6,8]);
+
+    function adpcmDecode(data, state) {
+        const out = new Int16Array(data.length * 2);
+        let oi = 0;
+        for (let b = 0; b < data.length; b++) {
+            for (let shift = 4; shift >= 0; shift -= 4) {
+                const nib = (data[b] >> shift) & 0x0F;
+                const step = ADPCM_STEP_TABLE[state.stepIndex];
+                let diff = step >> 3;
+                if (nib & 4) diff += step;
+                if (nib & 2) diff += step >> 1;
+                if (nib & 1) diff += step >> 2;
+                if (nib & 8) state.predictor -= diff;
+                else state.predictor += diff;
+                if (state.predictor > 32767) state.predictor = 32767;
+                else if (state.predictor < -32768) state.predictor = -32768;
+                state.stepIndex += ADPCM_IDX_ADJ[nib & 7];
+                if (state.stepIndex < 0) state.stepIndex = 0;
+                else if (state.stepIndex > 88) state.stepIndex = 88;
+                out[oi++] = state.predictor;
+            }
+        }
+        return out;
+    }
 
     // --- Senior Dev: NFC Comfort Trick PIN Parsing & Timer ---
     const urlParams = new URLSearchParams(window.location.search);
@@ -788,9 +927,14 @@
     let bluetoothDevice = null;
     let bluetoothServer = null;
     let manualDisconnect = false;
+    let bleConnected = false;
     let deviceName = '';
     let settingsService = null;
     let deepSleepActivated = false;
+    let localAudioPcm = [];
+    let localAdpcmState = { predictor: 0, stepIndex: 0 };
+    let localRecording = false;
+    let localRecordingStartTime = 0;
 
     // --- Settings Panel ---
     function openSettingsPanel() {
@@ -818,7 +962,7 @@
         try {
             const txChar = await settingsService.getCharacteristic(TX_POWER_CHAR);
             const v = await txChar.readValue();
-            document.getElementById('info-txpower').innerText = v.getInt8(0) + ' dBm';
+            document.getElementById('info-txpower').innerText = fmtTxPower(v.getInt8(0)) + ' (' + v.getInt8(0) + ' dBm)';
         } catch(e) {}
     }
 
@@ -830,11 +974,16 @@
     document.getElementById('settings-close').addEventListener('click', closeSettingsPanel);
     document.getElementById('settings-cancel').addEventListener('click', closeSettingsPanel);
 
-    const contrastSlider = document.getElementById('set-contrast');
-    const contrastVal = document.getElementById('contrast-val');
-    contrastSlider.addEventListener('input', () => { contrastVal.textContent = contrastSlider.value; });
+    function fmtTxPower(dbm) {
+        if (dbm <= -40) return (100 * Math.pow(10, (dbm + 40) / 10)).toFixed(0) + ' nW';
+        if (dbm <= -4) return (1000 * Math.pow(10, dbm / 10)).toFixed(0) + ' \u00B5W';
+        return Math.pow(10, dbm / 10).toFixed(1) + ' mW';
+    }
+
+    document.getElementById('settings-save').addEventListener('click', writeSettingsToDevice);
 
     async function readSettingsFromDevice() {
+        if (!settingsService) return;
         try {
             const c = await settingsService.getCharacteristic(OLED_SETTINGS_CHAR);
             const v = await c.readValue();
@@ -842,53 +991,66 @@
             document.getElementById('set-beacon-dwell').value = dv.getUint8(0);
             document.getElementById('set-qr-dwell').value = dv.getUint8(1);
             document.getElementById('set-imu-dwell').value = dv.getUint8(2);
-            document.getElementById('set-mic-dwell').value = dv.getUint8(3);
-            const override = dv.getUint8(4);
+            document.getElementById('set-power-dwell').value = dv.getUint8(3);
+            document.getElementById('set-mic-dwell').value = dv.getUint8(4);
+            const override = dv.getUint8(5);
             document.querySelector('input[name="view-mode"][value="' + override + '"]').checked = true;
-            document.getElementById('set-qr-enable').checked = dv.getUint8(5) !== 0;
-            contrastSlider.value = dv.getUint8(6);
-            contrastVal.textContent = dv.getUint8(6);
-            document.getElementById('set-invert').checked = dv.getUint8(7) !== 0;
-            document.getElementById('set-sleep-min').value = dv.getUint8(8);
-            document.getElementById('set-led-enable').checked = dv.getUint8(9) !== 0;
-            document.getElementById('set-deepsleep-enable').checked = dv.getUint8(10) !== 0;
-            document.getElementById('set-deepsleep-interval').value = dv.getUint8(11);
-            document.querySelector('input[name="deepsleep-oled"][value="' + dv.getUint8(12) + '"]').checked = true;
-            document.getElementById('settings-save').disabled = false;
-            console.log("Senior-UI: OLED settings loaded from device.");
+            document.getElementById('set-qr-enable').checked = dv.getUint8(6) !== 0;
+            contrastSlider.value = dv.getUint8(7);
+            contrastVal.textContent = dv.getUint8(7);
+            document.getElementById('set-invert').checked = dv.getUint8(8) !== 0;
+            document.getElementById('set-sleep-min').value = dv.getUint8(9);
+            document.getElementById('set-led-enable').checked = dv.getUint8(10) !== 0;
+            document.getElementById('set-deepsleep-enable').checked = dv.getUint8(11) !== 0;
+            document.getElementById('set-deepsleep-interval').value = dv.getUint8(12);
+            document.querySelector('input[name="deepsleep-oled"][value="' + dv.getUint8(13) + '"]').checked = true;
+            document.getElementById('set-tx-power').value = dv.getInt8(14);
         } catch(e) {
-            console.error("Senior-UI: Failed to read OLED settings:", e);
+            console.error("Failed to read OLED settings:", e);
         }
     }
 
     async function writeSettingsToDevice() {
         if (!settingsService) return;
-        const buf = new Uint8Array(13);
+        const buf = new Uint8Array(15);
         buf[0] = parseInt(document.getElementById('set-beacon-dwell').value) || 2;
         buf[1] = parseInt(document.getElementById('set-qr-dwell').value) || 10;
-        buf[2] = parseInt(document.getElementById('set-imu-dwell').value) || 5;
-        buf[3] = parseInt(document.getElementById('set-mic-dwell').value) || 5;
-        buf[4] = parseInt(document.querySelector('input[name="view-mode"]:checked').value) || 0;
-        buf[5] = document.getElementById('set-qr-enable').checked ? 1 : 0;
-        buf[6] = parseInt(document.getElementById('set-contrast').value) || 128;
-        buf[7] = document.getElementById('set-invert').checked ? 1 : 0;
-        buf[8] = parseInt(document.getElementById('set-sleep-min').value) || 0;
-        buf[9] = document.getElementById('set-led-enable').checked ? 1 : 0;
-        buf[10] = 0;
+        buf[2] = parseInt(document.getElementById('set-imu-dwell').value) || 8;
+        buf[3] = parseInt(document.getElementById('set-power-dwell').value) || 5;
+        buf[4] = parseInt(document.getElementById('set-mic-dwell').value) || 5;
+        buf[5] = parseInt(document.querySelector('input[name="view-mode"]:checked').value) || 0;
+        buf[6] = document.getElementById('set-qr-enable').checked ? 1 : 0;
+        buf[7] = parseInt(document.getElementById('set-contrast').value) || 128;
+        buf[8] = document.getElementById('set-invert').checked ? 1 : 0;
+        buf[9] = parseInt(document.getElementById('set-sleep-min').value) || 0;
+        buf[10] = document.getElementById('set-led-enable').checked ? 1 : 0;
+        buf[11] = 0;
         let iv = parseInt(document.getElementById('set-deepsleep-interval').value);
-        buf[11] = (iv >= 0 && iv <= 5) ? iv : 1;
-        buf[12] = parseInt(document.querySelector('input[name="deepsleep-oled"]:checked').value) || 0;
+        buf[12] = (iv >= 0 && iv <= 5) ? iv : 1;
+        buf[13] = parseInt(document.querySelector('input[name="deepsleep-oled"]:checked').value) || 0;
+        buf[14] = parseInt(document.getElementById('set-tx-power').value) || 0;
         try {
             const c = await settingsService.getCharacteristic(OLED_SETTINGS_CHAR);
             await c.writeValue(buf);
             console.log("Senior-UI: OLED settings written to device.");
+            try {
+                const txChar = await settingsService.getCharacteristic(TX_POWER_CHAR);
+                const v = await txChar.readValue();
+                const dbm = v.getInt8(0);
+                document.getElementById('info-txpower').innerText = fmtTxPower(dbm) + ' (' + dbm + ' dBm)';
+                document.getElementById('rssi-val').innerText = dbm;
+                document.getElementById('tx-mw').innerText = fmtTxPower(dbm);
+                document.getElementById('tx-pcnt').innerText = Math.round(((dbm + 40) / 48) * 100);
+                const txs = document.getElementById('tx-status');
+                if (dbm >= 4) { txs.innerText = 'HIGH POWER'; txs.style.color = 'var(--primary)'; }
+                else if (dbm >= -4) { txs.innerText = 'BALANCED'; txs.style.color = 'var(--mid)'; }
+                else { txs.innerText = 'POWER SAVE'; txs.style.color = 'var(--accent)'; }
+            } catch(e) {}
             closeSettingsPanel();
         } catch(e) {
             console.error("Senior-UI: Failed to write OLED settings:", e);
         }
     }
-
-    document.getElementById('settings-save').addEventListener('click', writeSettingsToDevice);
 
     const intervalLabels = ['10 Seconds', '1 Minute', '10 Minutes', '1 Hour', '10 Hours', '24 Hours'];
 
@@ -939,22 +1101,24 @@
     document.getElementById('ds-confirm-yes').addEventListener('click', async () => {
         document.getElementById('deepsleep-confirm').classList.remove('active');
         if (!settingsService) return;
-        const buf = new Uint8Array(13);
+        const buf = new Uint8Array(15);
         buf[0] = parseInt(document.getElementById('set-beacon-dwell').value) || 2;
         buf[1] = parseInt(document.getElementById('set-qr-dwell').value) || 10;
-        buf[2] = parseInt(document.getElementById('set-imu-dwell').value) || 5;
-        buf[3] = parseInt(document.getElementById('set-mic-dwell').value) || 5;
-        buf[4] = parseInt(document.querySelector('input[name="view-mode"]:checked').value) || 0;
-        buf[5] = document.getElementById('set-qr-enable').checked ? 1 : 0;
-        buf[6] = parseInt(document.getElementById('set-contrast').value) || 128;
-        buf[7] = document.getElementById('set-invert').checked ? 1 : 0;
-        buf[8] = parseInt(document.getElementById('set-sleep-min').value) || 0;
-        buf[9] = document.getElementById('set-led-enable').checked ? 1 : 0;
-        buf[10] = 1;
+        buf[2] = parseInt(document.getElementById('set-imu-dwell').value) || 8;
+        buf[3] = parseInt(document.getElementById('set-power-dwell').value) || 5;
+        buf[4] = parseInt(document.getElementById('set-mic-dwell').value) || 5;
+        buf[5] = parseInt(document.querySelector('input[name="view-mode"]:checked').value) || 0;
+        buf[6] = document.getElementById('set-qr-enable').checked ? 1 : 0;
+        buf[7] = parseInt(document.getElementById('set-contrast').value) || 128;
+        buf[8] = document.getElementById('set-invert').checked ? 1 : 0;
+        buf[9] = parseInt(document.getElementById('set-sleep-min').value) || 0;
+        buf[10] = document.getElementById('set-led-enable').checked ? 1 : 0;
+        buf[11] = 1;
         let tmp = parseInt(document.getElementById('set-deepsleep-interval').value);
         const intervalIdx = (tmp >= 0 && tmp <= 5) ? tmp : 1;
-        buf[11] = intervalIdx;
-        buf[12] = parseInt(document.querySelector('input[name="deepsleep-oled"]:checked').value) || 0;
+        buf[12] = intervalIdx;
+        buf[13] = parseInt(document.querySelector('input[name="deepsleep-oled"]:checked').value) || 0;
+        buf[14] = parseInt(document.getElementById('set-tx-power').value) || 0;
         try {
             const c = await settingsService.getCharacteristic(OLED_SETTINGS_CHAR);
             await c.writeValue(buf);
@@ -974,6 +1138,13 @@
 
     async function disconnectDevice() {
         manualDisconnect = true;
+        if (bluetoothDevice && settingsService) {
+            console.log("Senior-UI: Sending pre-disconnect signal...");
+            try {
+                const c = await settingsService.getCharacteristic(RESET_CHAR);
+                await c.writeValue(new Uint8Array([5]));
+            } catch (e) { console.log("Senior-UI: Pre-disconnect write error", e); }
+        }
         if (bluetoothDevice) {
             console.log("Senior-UI: Explicitly disconnecting GATT server...");
             try {
@@ -997,6 +1168,11 @@
         btn.classList.remove('disconnect');
         document.getElementById('reset-btn').style.display = 'none';
         document.getElementById('deepsleep-btn').style.display = 'none';
+        document.getElementById('live-audio-btn').disabled = true;
+        liveAudioActive = false;
+        document.getElementById('live-audio-btn').innerText = '🔴 Live Audio';
+        document.getElementById('live-audio-btn').style.borderColor = '';
+        document.getElementById('live-audio-btn').style.color = '';
         stopRenderLoop();
         if (bluetoothDevice) {
             try { bluetoothDevice.removeEventListener('gattserverdisconnected', onDisconnected); } catch(e) {}
@@ -1005,6 +1181,7 @@
         bluetoothServer = null;
         window.currentBLEService = null;
         settingsService = null;
+        bleConnected = false;
         if (!deepSleepActivated) manualDisconnect = false;
     }
 
@@ -1034,6 +1211,11 @@
         btn.classList.remove('disconnect');
         document.getElementById('reset-btn').style.display = 'none';
         document.getElementById('deepsleep-btn').style.display = 'none';
+        document.getElementById('live-audio-btn').disabled = true;
+        liveAudioActive = false;
+        document.getElementById('live-audio-btn').innerText = '🔴 Live Audio';
+        document.getElementById('live-audio-btn').style.borderColor = '';
+        document.getElementById('live-audio-btn').style.color = '';
         
         stopRenderLoop();
         
@@ -1233,69 +1415,876 @@
             lastPsdData = new Float32Array(fftData);
         }, true);
 
-        document.getElementById('reset-btn').onclick = async () => {
-            if (confirm("System will enter UF2 Bootloader Mode. Current session will end. Proceed?")) {
-                try {
-                    const char = await service.getCharacteristic(RESET_CHAR);
-                    await char.writeValue(new Uint8Array([1]));
-                } catch (e) { console.error("Reset failed", e); }
+        // Subscribe to raw ADPCM audio stream (decode in browser)
+        await secureSetupNotify(AUDIO_STREAM_CHAR, (v) => {
+            const data = new Uint8Array(v.buffer);
+            if (data.length < 2) return;
+            const header = data[0];
+            const isSync = (header & 0x80) === 0;
+            if (isSync) {
+                localAdpcmState = { predictor: 0, stepIndex: 0 };
             }
+            const adpcmPayload = data.slice(1);
+            const pcm = adpcmDecode(adpcmPayload, localAdpcmState);
+            if (localRecording) {
+                for (let i = 0; i < pcm.length; i++) localAudioPcm.push(pcm[i]);
+            }
+            if (window._liveWaveform) {
+                updateWaveform(pcm);
+                for (let i = 0; i < pcm.length; i++) {
+                    ringBuf[ringHead] = pcm[i];
+                    ringHead = (ringHead + 1) % ringBuf.length;
+                    if (ringHead === ringTail) {
+                        ringTail = (ringTail + 1) % ringBuf.length;
+                    }
+                }
+            }
+        }, true);
+
+        document.getElementById('reset-btn').onclick = async () => {
+            if (!confirm("System will enter UF2 Bootloader Mode. Current session will end. Proceed?")) return;
+            try {
+                if (settingsService) {
+                    const c = await settingsService.getCharacteristic(RESET_CHAR);
+                    await c.writeValue(new Uint8Array([1]));
+                } else if (backendBaseUrl) {
+                    await fetch(`${backendBaseUrl}/api/device/control`, {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({mode: 1})
+                    });
+                } else {
+                    console.error("Reset failed: no BLE connection or backend available");
+                }
+            } catch (e) { console.error("Reset failed", e); }
         };
 
+        document.getElementById('live-audio-btn').disabled = false;
         startRenderLoop();
     }
 
     document.getElementById('connect-btn').addEventListener('click', async () => {
         const btn = document.getElementById('connect-btn');
-        if (btn.classList.contains('disconnect')) {
-            await disconnectDevice();
+        if (bluetoothDevice && bluetoothDevice.gatt && bluetoothDevice.gatt.connected) {
+            disconnectDevice();
+            return;
+        }
+        if (!navigator.bluetooth) {
+            btn.innerText = 'Web BT N/A';
+            console.error('Web Bluetooth not available (require HTTPS or localhost)');
+            setTimeout(() => { btn.innerText = 'CONNECT TO nRF52'; }, 3000);
+            return;
+        }
+        btn.innerText = 'CONNECTING...';
+        btn.disabled = true;
+        try {
+            const device = await navigator.bluetooth.requestDevice({
+                filters: [{ services: [SERVICE_UUID] }]
+            });
+            bluetoothDevice = device;
+            deviceName = device.name || 'Skynet AI Beacon';
+            device.addEventListener('gattserverdisconnected', onDisconnected);
+            const server = await device.gatt.connect();
+            bluetoothServer = server;
+            const service = await server.getPrimaryService(SERVICE_UUID);
+            window.currentBLEService = service;
+            settingsService = service;
+            await startServicesAndRender(service);
+            btn.innerText = 'DISCONNECT';
+            btn.style.borderColor = 'var(--accent)';
+            btn.style.color = 'var(--accent)';
+            document.getElementById('status-text').innerText = 'UPLINK ACTIVE';
+            document.getElementById('tactical-header').classList.add('connected');
+            document.getElementById('bt-peer').innerText = deviceName;
+            document.getElementById('ble-status').innerHTML = '<span style="color:var(--primary);">Online</span>';
+            document.getElementById('reset-btn').style.display = 'block';
+            document.getElementById('deepsleep-btn').style.display = 'block';
+            document.getElementById('live-audio-btn').disabled = false;
+            bleConnected = true;
+            manualDisconnect = false;
+            startRenderLoop();
+        } catch(e) {
+            btn.innerText = 'CONNECT TO nRF52';
+            if (e.name === 'NotFoundError') {
+                console.log('Web Bluetooth: user cancelled device selection');
+            } else {
+                console.error('Web Bluetooth connect error:', e);
+            }
+        }
+        btn.disabled = false;
+    });
+
+    // --- Backend Connection ---
+    let backendWs = null;
+    let backendBaseUrl = '';
+    let recordingTimerId = null;
+    let audioQueue = [];
+    let autoConnectDone = false;
+
+    const waveformCanvas = document.getElementById('waveformCanvas');
+    const waveformCtx = waveformCanvas.getContext('2d');
+    const WAVEFORM_HEIGHT = 80;
+
+    function resizeWaveform() {
+        const parent = waveformCanvas.parentElement;
+        if (parent) {
+            const w = parent.clientWidth || 600;
+            waveformCanvas.width = w;
+            waveformCanvas.height = WAVEFORM_HEIGHT;
+        }
+    }
+    resizeWaveform();
+    const WAVEFORM_WIDTH = waveformCanvas.width;
+    const waveformData = new Float32Array(WAVEFORM_WIDTH);
+
+    function updateWaveform(samples) {
+        for (let i = 0; i < samples.length; i++) {
+            const val = Math.abs(samples[i]) / 32768;
+            const idx = Math.floor(i * WAVEFORM_WIDTH / samples.length);
+            if (idx < WAVEFORM_WIDTH) {
+                waveformData[idx] = Math.max(waveformData[idx], val);
+            }
+        }
+        if (samples.length > 0) {
+            waveformData.copyWithin(0, samples.length > WAVEFORM_WIDTH ? samples.length - WAVEFORM_WIDTH : 1);
+        }
+        drawWaveform();
+    }
+
+    function drawWaveform() {
+        waveformCtx.fillStyle = '#010203';
+        waveformCtx.fillRect(0, 0, WAVEFORM_WIDTH, WAVEFORM_HEIGHT);
+        waveformCtx.strokeStyle = '#00f2ff';
+        waveformCtx.lineWidth = 1.5;
+        waveformCtx.beginPath();
+        const mid = WAVEFORM_HEIGHT / 2;
+        for (let x = 0; x < WAVEFORM_WIDTH; x++) {
+            const amp = waveformData[x] * mid * 0.9;
+            const y = mid - amp;
+            x === 0 ? waveformCtx.moveTo(x, y) : waveformCtx.lineTo(x, y);
+        }
+        waveformCtx.stroke();
+    }
+
+    async function connectBackend(host, port) {
+        backendBaseUrl = `http://${host}:${port}`;
+        const wsUrl = `ws://${host}:${port}`;
+        const statusEl = document.getElementById('backend-status');
+        const connectBtn = document.getElementById('backend-connect-btn');
+
+        try {
+            const resp = await fetch(`${backendBaseUrl}/api/status`);
+            if (!resp.ok) throw new Error('Backend unreachable');
+            const data = await resp.json();
+
+            backendWs = new WebSocket(`${wsUrl}/ws/events`);
+            backendWs.onopen = () => {
+                statusEl.innerHTML = '<span style="color:var(--green);">Connected</span>';
+                connectBtn.innerText = 'Disconnect';
+                document.getElementById('rec-ctrl-btn').disabled = false;
+                document.getElementById('chat-input').disabled = false;
+                document.getElementById('chat-send-btn').disabled = false;
+                document.getElementById('gain-slider').disabled = false;
+                document.getElementById('ble-connect-btn').disabled = false;
+                document.getElementById('ble-scan-btn').style.display = 'inline-block';
+                document.getElementById('ble-scan-btn').disabled = false;
+                // Show assistant toggle if backend supports it
+                fetch(backendBaseUrl + '/api/assistant/status')
+                    .then(r => r.json())
+                    .then(s => {
+                        if (s.enabled) {
+                            const btn = document.getElementById('assistant-toggle-btn');
+                            btn.style.display = 'inline-block';
+                            btn.disabled = false;
+                            if (s.active) {
+                                btn.innerText = 'AI Mode: ON';
+                                btn.style.borderColor = 'var(--accent)';
+                                btn.style.color = 'var(--accent)';
+                            }
+                        }
+                    }).catch(() => {});
+                document.getElementById('live-audio-btn').disabled = false;
+                console.log('Backend connected');
+            };
+            backendWs.onmessage = (event) => {
+                try {
+                    const msg = JSON.parse(event.data);
+                    if (msg.type === 'status') {
+                        const bleEl = document.getElementById('ble-status');
+                        if (msg.data.notifications_alive) {
+                            bleEl.innerHTML = '<span style="color:var(--primary);">Online</span>';
+                            document.getElementById('live-audio-btn').disabled = false;
+                        } else if (msg.data.connected) {
+                            bleEl.innerHTML = '<span style="color:var(--audio);">Connecting...</span>';
+                        } else {
+                            bleEl.innerHTML = '<span style="color:var(--text-dim);">Offline</span>';
+                        }
+                    } else if (msg.type === 'ble_connected') {
+                        document.getElementById('ble-status').innerHTML = '<span style="color:var(--primary);">Online</span>';
+                        document.getElementById('live-audio-btn').disabled = false;
+                    } else if (msg.type === 'ble_disconnected') {
+                        document.getElementById('ble-status').innerHTML = '<span style="color:var(--text-dim);">Offline</span>';
+                    } else if (msg.type === 'live_audio') {
+                        // Status update from backend live audio control, ignore (handled by button state)
+                    } else if (msg.type === 'assistant_result') {
+                        const sttOut = document.getElementById('stt-output');
+                        sttOut.innerHTML = '<div style="font-size:0.9rem">' + (msg.data.text || '') + '</div>';
+                        addChatMessage('🎤 "' + (msg.data.text || '') + '"', 'user');
+                        addChatMessage('✅ ' + (msg.data.result || 'Done') + ' (' + (msg.data.command ? msg.data.command.action : '') + ')', 'ai');
+                    }
+                } catch (e) {}
+            };
+            backendWs.onclose = () => {
+                backendDisconnected();
+            };
+            backendWs.onerror = () => {
+                backendDisconnected();
+            };
+
+            if (data.gain !== undefined) {
+                document.getElementById('gain-slider').value = data.gain;
+                document.getElementById('gain-label').innerText = data.gain.toFixed(1) + 'x';
+            }
+        } catch (e) {
+            statusEl.innerHTML = '<span style="color:var(--accent);">Connection failed</span>';
+            console.error('Backend connect error:', e);
+        }
+    }
+
+    function backendDisconnected() {
+        document.getElementById('backend-status').innerHTML = '<span style="color:var(--accent);">Disconnected</span>';
+        document.getElementById('backend-connect-btn').innerText = 'Connect';
+        document.getElementById('rec-ctrl-btn').disabled = true;
+        document.getElementById('play-ctrl-btn').disabled = true;
+        document.getElementById('chat-input').disabled = true;
+        document.getElementById('chat-send-btn').disabled = true;
+        document.getElementById('gain-slider').disabled = true;
+        document.getElementById('ble-scan-btn').style.display = 'none';
+        document.getElementById('ble-scan-btn').disabled = true;
+        document.getElementById('assistant-toggle-btn').style.display = 'none';
+        document.getElementById('assistant-toggle-btn').disabled = true;
+        document.getElementById('live-audio-btn').disabled = true;
+        liveAudioActive = false;
+        document.getElementById('live-audio-btn').innerText = '🔴 Live Audio';
+        document.getElementById('live-audio-btn').style.borderColor = '';
+        document.getElementById('live-audio-btn').style.color = '';
+        if (recState === 'rec') recStop();
+        backendWs = null;
+    }
+
+    async function disconnectBackend() {
+        if (recState === 'rec') recStop();
+        if (backendWs) {
+            backendWs.close();
+            backendWs = null;
+        }
+        backendDisconnected();
+    }
+
+    document.getElementById('backend-connect-btn').addEventListener('click', () => {
+        const btn = document.getElementById('backend-connect-btn');
+        if (btn.innerText === 'Disconnect') {
+            disconnectBackend();
+            return;
+        }
+        const host = document.getElementById('backend-host').value || 'localhost';
+        const port = parseInt(document.getElementById('backend-port').value) || 8765;
+        connectBackend(host, port);
+    });
+
+    document.getElementById('ble-connect-btn').addEventListener('click', async () => {
+        const btn = document.getElementById('ble-connect-btn');
+        const statusEl = document.getElementById('ble-status');
+
+        if (btn.innerText === 'Disconnect BLE') {
+            try {
+                await fetch(`${backendBaseUrl}/api/ble/disconnect`, {method:'POST'});
+            } catch(e) {
+                console.error('BLE disconnect failed:', e);
+            }
+            btn.innerText = 'nRF52';
+            btn.style.borderColor = 'var(--text-dim)';
+            btn.style.color = 'var(--text-dim)';
+            statusEl.innerHTML = '<span style="color:var(--text-dim);">Offline</span>';
+            document.getElementById('live-audio-btn').disabled = true;
+            liveAudioActive = false;
+            document.getElementById('recording-duration').innerText = '';
             return;
         }
 
+        if (!backendBaseUrl) {
+            statusEl.innerHTML = '<span style="color:var(--accent);">Backend not connected</span>';
+            return;
+        }
+
+        btn.innerText = 'Connecting...';
+        btn.disabled = true;
+        statusEl.innerHTML = '<span style="color:var(--audio);">Connecting via backend...</span>';
+
         try {
-            deepSleepActivated = false;
-            // SENIOR-DEV: Vor jedem neuen Scan ALLES nullen
-            if (bluetoothDevice && bluetoothDevice.gatt.connected) {
-                bluetoothDevice.gatt.disconnect();
-            }
-            bluetoothDevice = null;
-            bluetoothServer = null;
-            settingsService = null;
-
-            console.log("Senior-UI: Requesting fresh Bluetooth Device...");
-            bluetoothDevice = await navigator.bluetooth.requestDevice({
-                acceptAllDevices: true,
-                optionalServices: [SERVICE_UUID]
+            const resp = await fetch(`${backendBaseUrl}/api/ble/connect`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({name: 'Skynet AI Beacon'})
             });
-            
-            bluetoothDevice.addEventListener('gattserverdisconnected', onDisconnected);
-            
-            deviceName = bluetoothDevice.name || 'SKYNET-UNIT-SENSE';
-            console.log("Senior-UI: Initiating GATT Handshake...");
-            bluetoothServer = await bluetoothDevice.gatt.connect();
-            
-            console.log("Senior-UI: Discovery of Primary Service...");
-            const service = await bluetoothServer.getPrimaryService(SERVICE_UUID);
-            window.currentBLEService = service;
-            settingsService = service;
-            
-            document.getElementById('tactical-header').classList.add('connected');
-            document.getElementById('status-text').innerText = 'UPLINK ACTIVE';
-            document.getElementById('bt-peer').innerText = deviceName;
-            
-            btn.innerText = 'Disconnect Tactical Uplink';
-            btn.classList.add('disconnect');
-            document.getElementById('reset-btn').style.display = 'block';
-            document.getElementById('deepsleep-btn').style.display = 'block';
-
-            await startServicesAndRender(service);
-            document.getElementById('bt-peer').innerText = deviceName;
-
-            // --- Auto-Hide PIN after successful connection ---
-            removePinDisplay();
-
-        } catch (err) { console.error("BLE Error:", err); }
+            if (!resp.ok) {
+                const err = await resp.json();
+                throw new Error(err.detail || 'Backend BLE connect failed');
+            }
+            const data = await resp.json();
+            statusEl.innerHTML = '<span style="color:var(--primary);">Online</span>';
+            btn.innerText = 'Disconnect BLE';
+            btn.style.borderColor = 'var(--accent)';
+            btn.style.color = 'var(--accent)';
+            document.getElementById('live-audio-btn').disabled = false;
+            document.getElementById('recording-duration').innerText = 'BLE: ' + (data.device || 'Online');
+        } catch (e) {
+            statusEl.innerHTML = `<span style="color:var(--accent);">${e.message}</span>`;
+            btn.innerText = 'nRF52';
+            console.error('Backend BLE connect error:', e);
+        }
+        btn.disabled = false;
     });
+
+    document.getElementById('ble-scan-btn').addEventListener('click', async () => {
+        if (!backendWs) return;
+        const btn = document.getElementById('ble-scan-btn');
+        const statusEl = document.getElementById('ble-status');
+        btn.disabled = true;
+        btn.innerText = 'Scanning...';
+        statusEl.innerHTML = '<span style="color:var(--audio);">Scanning for 8s...</span>';
+        try {
+            const resp = await fetch(`${backendBaseUrl}/api/ble/scan?timeout=8`);
+            if (!resp.ok) throw new Error('Scan failed');
+            const data = await resp.json();
+            const devs = data.devices || [];
+            if (devs.length === 0) {
+                statusEl.innerHTML = '<span style="color:var(--accent);">No BLE devices found</span>';
+            } else {
+                let html = devs.map(d =>
+                    `${d.name} (${d.rssi || '?'}dBm)`
+                ).join('<br>');
+                statusEl.innerHTML = `<span style="color:var(--green);font-size:0.65rem;">${html}</span>`;
+            }
+        } catch (e) {
+            statusEl.innerHTML = `<span style="color:var(--accent);">Scan error: ${e.message}</span>`;
+        }
+        btn.innerText = 'Scan';
+        btn.disabled = false;
+    });
+
+    document.getElementById('gain-slider').addEventListener('input', async () => {
+        const val = parseFloat(document.getElementById('gain-slider').value);
+        document.getElementById('gain-label').innerText = val.toFixed(1) + 'x';
+        try {
+            await fetch(`${backendBaseUrl}/api/gain`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({gain: val})
+            });
+        } catch (e) {
+            console.error('Set gain error:', e);
+        }
+    });
+
+    // ── Live Audio Mode ──
+    let liveAudioActive = false;
+    let audioCtx = null;
+    let ringBuf = new Int16Array(16384);
+    let ringHead = 0, ringTail = 0;
+
+    function liveAudioStart() {
+        if (audioCtx) return;
+        try {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)({sampleRate: 16000});
+        } catch(e) { console.error('AudioContext failed:', e); return; }
+        const bufSize = 2048;
+        const proc = audioCtx.createScriptProcessor(bufSize, 1, 1);
+        proc.onaudioprocess = (e) => {
+            const out = e.outputBuffer.getChannelData(0);
+            const count = bufSize;
+            for (let i = 0; i < count; i++) {
+                if (ringHead !== ringTail) {
+                    out[i] = ringBuf[ringTail] / 32768.0;
+                    ringTail = (ringTail + 1) % ringBuf.length;
+                } else {
+                    out[i] = 0;
+                }
+            }
+        };
+        proc.connect(audioCtx.destination);
+    }
+
+    function liveAudioStop() {
+        if (audioCtx) { audioCtx.close(); audioCtx = null; }
+        ringHead = 0; ringTail = 0;
+    }
+
+    document.getElementById('live-audio-btn').addEventListener('click', async () => {
+        const btn = document.getElementById('live-audio-btn');
+        const durEl = document.getElementById('recording-duration');
+
+        if (!bluetoothDevice && !settingsService) return;
+
+        if (!liveAudioActive) {
+            if (settingsService) {
+                try {
+                    const c = await settingsService.getCharacteristic(LIVE_AUDIO_CTRL_CHAR);
+                    await c.writeValue(new Uint8Array([1]));
+                } catch(e) { /* optional control char */ }
+            } else if (backendBaseUrl) {
+                try { await fetch(`${backendBaseUrl}/api/liveaudio/start`, {method:'POST'}); } catch(e) {}
+            }
+            liveAudioActive = true;
+            window._liveWaveform = true;
+            liveAudioStart();
+            btn.innerText = '⏹ Stop Live Audio';
+            btn.style.borderColor = 'var(--accent)';
+            btn.style.color = 'var(--accent)';
+            durEl.innerText = '🔴 LIVE AUDIO';
+            console.log('Live Audio: STARTED (WebBT)');
+        } else {
+            if (settingsService) {
+                try {
+                    const c = await settingsService.getCharacteristic(LIVE_AUDIO_CTRL_CHAR);
+                    await c.writeValue(new Uint8Array([0]));
+                } catch(e) { /* optional */ }
+            } else if (backendBaseUrl) {
+                try { await fetch(`${backendBaseUrl}/api/liveaudio/stop`, {method:'POST'}); } catch(e) {}
+            }
+            liveAudioActive = false;
+            window._liveWaveform = false;
+            liveAudioStop();
+            btn.innerText = '🔴 Live Audio';
+            btn.style.borderColor = '';
+            btn.style.color = '';
+            durEl.innerText = '';
+        }
+    });
+
+    // ── Audio Recording & Playback (HTTP-based) ──
+    let recState = 'idle';
+    let audioUrl = null;
+
+    function fmtDur(sec) { const m=String(Math.floor(sec/60)).padStart(2,'0'); const s=String(Math.floor(sec%60)).padStart(2,'0'); return m+':'+s; }
+
+    async function recStart() {
+        if (recState !== 'idle') return;
+        localAudioPcm = [];
+        localRecording = true;
+        recState = 'rec';
+        localRecordingStartTime = Date.now();
+        document.getElementById('rec-ctrl-btn').innerText = 'Stop';
+        document.getElementById('rec-ctrl-btn').style.borderColor = 'var(--accent)';
+        document.getElementById('rec-ctrl-btn').style.color = 'var(--accent)';
+        document.getElementById('play-ctrl-btn').disabled = true;
+        recordingTimerId = setInterval(updateRecordingTimer, 500);
+        console.log('Recording started (local)');
+    }
+
+    async function recStop() {
+        if (recState !== 'rec') return;
+        recState = 'idle';
+        localRecording = false;
+        if (recordingTimerId) { clearInterval(recordingTimerId); recordingTimerId = null; }
+        document.getElementById('rec-ctrl-btn').innerText = 'Record';
+        document.getElementById('rec-ctrl-btn').style.borderColor = 'var(--primary)';
+        document.getElementById('rec-ctrl-btn').style.color = 'var(--primary)';
+
+        const samples = new Int16Array(localAudioPcm);
+        if (samples.length === 0) {
+            document.getElementById('recording-duration').innerText = 'Duration: 00:00 (no data)';
+            return;
+        }
+        const wav = createWavBlob(samples, 16000);
+        window._lastWavBlob = wav;
+        if (audioUrl) URL.revokeObjectURL(audioUrl);
+        audioUrl = URL.createObjectURL(wav);
+        const player = document.getElementById('audio-player');
+        player.src = audioUrl;
+        player.style.display = 'block';
+        document.getElementById('play-ctrl-btn').disabled = false;
+        const dur = samples.length / 16000;
+        document.getElementById('recording-duration').innerText = 'Duration: ' + fmtDur(dur);
+        console.log('Recording stopped: ' + fmtDur(dur) + ', ' + samples.length + ' samples');
+    }
+
+    function recToggle() {
+        if (recState === 'rec') recStop();
+        else recStart();
+    }
+
+    function playAudio() {
+        const p = document.getElementById('audio-player');
+        if (p.paused) p.play();
+        else { p.pause(); p.currentTime = 0; }
+    }
+
+    function updateRecordingTimer() {
+        if (recState !== 'rec') return;
+        const elapsed = Math.floor((Date.now() - localRecordingStartTime) / 1000);
+        document.getElementById('recording-duration').innerText = 'Recording: ' + fmtDur(elapsed);
+    }
+
+    function createWavBlob(samples, sampleRate) {
+        const numChannels = 1, bitsPerSample = 16;
+        const byteRate = sampleRate * numChannels * bitsPerSample / 8;
+        const blockAlign = numChannels * bitsPerSample / 8;
+        const dataSize = samples.length * (bitsPerSample / 8);
+        const buf = new ArrayBuffer(44 + dataSize);
+        const view = new DataView(buf);
+        writeStr(view, 0, 'RIFF');
+        view.setUint32(4, 36 + dataSize, true);
+        writeStr(view, 8, 'WAVE');
+        writeStr(view, 12, 'fmt ');
+        view.setUint32(16, 16, true);
+        view.setUint16(20, 1, true);
+        view.setUint16(22, numChannels, true);
+        view.setUint32(24, sampleRate, true);
+        view.setUint32(28, byteRate, true);
+        view.setUint16(32, blockAlign, true);
+        view.setUint16(34, bitsPerSample, true);
+        writeStr(view, 36, 'data');
+        view.setUint32(40, dataSize, true);
+        let offset = 44;
+        for (let i = 0; i < samples.length; i++, offset += 2) {
+            view.setInt16(offset, samples[i], true);
+        }
+        return new Blob([buf], { type: 'audio/wav' });
+    }
+
+    function writeStr(view, offset, str) {
+        for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i));
+    }
+
+    function drawTimeline(pcmInt16, progress) {
+        const w = waveformCanvas.width, h = waveformCanvas.height, mid = h/2;
+        waveformCtx.fillStyle = '#010203'; waveformCtx.fillRect(0,0,w,h);
+        if (!pcmInt16) { drawWaveform(); return; }
+        waveformCtx.strokeStyle = '#00ff99'; waveformCtx.lineWidth = 1.5; waveformCtx.beginPath();
+        const step = Math.max(1, Math.floor(pcmInt16.length / w));
+        for (let x = 0; x < w && x*step < pcmInt16.length; x++) {
+            const idx = x*step; let mx=0;
+            for (let s=0; s<step && idx+s<pcmInt16.length; s++) mx = Math.max(mx, Math.abs(pcmInt16[idx+s]));
+            const y = mid - (mx/32768)*mid*.9;
+            x===0 ? waveformCtx.moveTo(x,y) : waveformCtx.lineTo(x,y);
+        }
+        waveformCtx.stroke();
+    }
+
+    document.getElementById('rec-ctrl-btn').addEventListener('click', recToggle);
+    document.getElementById('play-ctrl-btn').addEventListener('click', playAudio);
+
+    // Test Tone (debug)
+    document.getElementById('testtone-btn').addEventListener('click', async () => {
+        if (!backendWs) return; const btn = document.getElementById('testtone-btn');
+        btn.disabled = true; btn.innerText = 'Loading...';
+        try {
+            const blob = await (await fetch(backendBaseUrl + '/api/audio/testtone/raw')).blob();
+            window._lastWavBlob = blob;
+            if (audioUrl) URL.revokeObjectURL(audioUrl);
+            audioUrl = URL.createObjectURL(blob);
+            const p = document.getElementById('audio-player');
+            p.src = audioUrl; p.style.display = 'block';
+            document.getElementById('play-ctrl-btn').disabled = false;
+            document.getElementById('recording-duration').innerText = 'Test tone: 2.0s @440Hz';
+            p.play();
+        } catch(e) { console.error('Test tone:', e); }
+        btn.innerText = 'Test Tone'; btn.disabled = false;
+    });
+
+    // ── Assistant Mode Toggle ──
+    document.getElementById('assistant-toggle-btn').addEventListener('click', async () => {
+        if (!backendWs) return;
+        const btn = document.getElementById('assistant-toggle-btn');
+        const isOn = btn.innerText.includes('ON');
+        try {
+            const r = await fetch(backendBaseUrl + '/api/assistant/toggle', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({active: !isOn})
+            });
+            if (!r.ok) throw new Error('toggle failed');
+            const data = await r.json();
+            if (data.active) {
+                btn.innerText = 'AI Mode: ON';
+                btn.style.borderColor = 'var(--accent)';
+                btn.style.color = 'var(--accent)';
+                document.getElementById('recording-duration').innerText = '🤖 AI Mode: Listening...';
+                addChatMessage('🤖 AI Assistant activated. Speak a command.', 'system');
+            } else {
+                btn.innerText = 'AI Mode: OFF';
+                btn.style.borderColor = 'var(--text-dim)';
+                btn.style.color = 'var(--text-dim)';
+                document.getElementById('recording-duration').innerText = 'AI Mode: OFF';
+                addChatMessage('AI Assistant deactivated.', 'system');
+            }
+        } catch(e) { console.error('Toggle error:', e); }
+    });
+
+    // ── Sensors WebSocket (IMU/Gyro/Battery via backend) ──
+    let sensorsWs = null;
+    function connectSensorsWS() {
+        if (sensorsWs) try { sensorsWs.close(); } catch(e) {}
+        const wsUrl = backendBaseUrl.replace('http', 'ws');
+        sensorsWs = new WebSocket(wsUrl + '/ws/sensors');
+        sensorsWs.onmessage = (event) => {
+            try {
+                const msg = JSON.parse(event.data);
+                const d = msg.data;
+                if (msg.type === 'accel') {
+                    document.getElementById('ax').innerText = d.x.toFixed(2);
+                    document.getElementById('ay').innerText = d.y.toFixed(2);
+                    document.getElementById('az').innerText = d.z.toFixed(2);
+                    if (charts && charts.accel) {
+                        [d.x, d.y, d.z].forEach((v, i) => { charts.accel.data.datasets[i].data.push(v); charts.accel.data.datasets[i].data.shift(); });
+                        charts.accel.update('none');
+                    }
+                } else if (msg.type === 'gyro') {
+                    document.getElementById('gx').innerText = d.x.toFixed(1);
+                    document.getElementById('gy').innerText = d.y.toFixed(1);
+                    document.getElementById('gz').innerText = d.z.toFixed(1);
+                    if (charts && charts.gyro) {
+                        [d.x, d.y, d.z].forEach((v, i) => { charts.gyro.data.datasets[i].data.push(v); charts.gyro.data.datasets[i].data.shift(); });
+                        charts.gyro.update('none');
+                    }
+                } else if (msg.type === 'audio_level') {
+                    const rms = d.rms / 1000.0;
+                    const zcr = d.zcr;
+                    let dbfs = 20 * Math.log10(rms || 0.0001);
+                    let dbspl = dbfs + 94 + 41;
+                    if (dbspl < 30) dbspl = 30;
+                    const freq_est = (zcr / 1024) * 8000;
+                    const fftData = new Float32Array(512);
+                    for (let i = 0; i < 512; i++) {
+                        const binFreq = (i * 16000 / 1024);
+                        let binValue = 30 + Math.random() * 5;
+                        if (dbspl > 40) {
+                            const I = (dbspl - 30);
+                            const dist = Math.abs(binFreq - freq_est);
+                            const W = 200 + (I * 10);
+                            binValue += Math.exp(-Math.pow(dist, 2) / (2 * Math.pow(W, 2))) * I;
+                            binValue += Math.exp(-Math.pow(Math.abs(binFreq - (freq_est * 2)), 2) / (2 * Math.pow(W/2, 2))) * (I * 0.4);
+                            binValue += Math.exp(-Math.pow(i - 10, 2) / 100) * (I * 0.3);
+                        }
+                        binValue += getAWeighting(binFreq || 1);
+                        psd_ema[i] = (ema_alpha * binValue) + ((1 - ema_alpha) * psd_ema[i]);
+                        fftData[i] = Math.max(30, Math.min(120, psd_ema[i]));
+                    }
+                    lastPsdData = new Float32Array(fftData);
+                } else if (msg.type === 'battery') {
+                    document.getElementById('batt-volt').innerText = (d.voltage_mv / 1000).toFixed(2);
+                    document.getElementById('batt-soc').innerText = d.soc + '%';
+                    const badge = document.getElementById('batt-usb');
+                    if (d.status === 1) { badge.style.display='inline-block'; badge.innerText='CHARGING'; badge.style.background='var(--accent)'; }
+                    else if (d.status === 2) { badge.style.display='inline-block'; badge.innerText='USB POWER'; badge.style.background='var(--green)'; }
+                    else { badge.style.display='inline-block'; badge.innerText='BATTERY'; badge.style.background='var(--low)'; }
+                    document.getElementById('batt-volt').style.color = d.soc > 50 ? 'var(--green)' : d.soc > 20 ? 'var(--high)' : 'var(--accent)';
+                } else if (msg.type === 'tx_power') {
+                    const dbm = d.dbm;
+                    document.getElementById('rssi-val').innerText = dbm;
+                    document.getElementById('tx-mw').innerText = fmtTxPower(dbm);
+                    document.getElementById('tx-pcnt').innerText = Math.round(((dbm + 40) / 48) * 100);
+                    const txs = document.getElementById('tx-status');
+                    if (d.dbm >= 4) { txs.innerText = 'HIGH POWER'; txs.style.color = 'var(--primary)'; }
+                    else if (d.dbm >= -4) { txs.innerText = 'BALANCED'; txs.style.color = 'var(--mid)'; }
+                    else { txs.innerText = 'POWER SAVE'; txs.style.color = 'var(--accent)'; }
+                }
+            } catch(e) {}
+        };
+        sensorsWs.onclose = () => { sensorsWs = null; };
+        sensorsWs.onerror = () => { sensorsWs = null; };
+    }
+
+    // --- STT ---
+    let sttWs = null;
+
+    async function startSTT() {
+        if (!backendWs) return;
+        const wsUrl = backendBaseUrl.replace('http', 'ws');
+        sttWs = new WebSocket(`${wsUrl}/ws/stt`);
+
+        sttWs.onmessage = (event) => {
+            try {
+                const msg = JSON.parse(event.data);
+                const output = document.getElementById('stt-output');
+                if (msg.type === 'result') {
+                    const p = document.createElement('div');
+                    p.textContent = msg.text;
+                    output.innerHTML = '';
+                    output.appendChild(p);
+                } else if (msg.type === 'partial') {
+                    const existing = output.querySelector('.partial');
+                    if (existing) existing.textContent = msg.text;
+                    else {
+                        const p = document.createElement('div');
+                        p.className = 'partial';
+                        p.textContent = msg.text;
+                        output.appendChild(p);
+                    }
+                }
+            } catch (e) {}
+        };
+
+        try {
+            await fetch(`${backendBaseUrl}/api/stt/start`, {method: 'POST'});
+            document.getElementById('stt-auto-btn').innerText = 'Stop STT';
+            document.getElementById('stt-auto-btn').style.borderColor = 'var(--accent)';
+            document.getElementById('stt-auto-btn').style.color = 'var(--accent)';
+        } catch (e) {
+            console.error('STT start error:', e);
+        }
+    }
+
+    async function stopSTT() {
+        if (sttWs) { sttWs.close(); sttWs = null; }
+        try {
+            await fetch(`${backendBaseUrl}/api/stt/stop`, {method: 'POST'});
+        } catch (e) {}
+        document.getElementById('stt-auto-btn').innerText = 'Auto-STT';
+        document.getElementById('stt-auto-btn').style.borderColor = 'var(--green)';
+        document.getElementById('stt-auto-btn').style.color = 'var(--green)';
+    }
+
+    document.getElementById('stt-auto-btn').addEventListener('click', () => {
+        const btn = document.getElementById('stt-auto-btn');
+        if (btn.innerText === 'Auto-STT' || btn.innerText === 'Process Audio') {
+            startSTT();
+        } else {
+            stopSTT();
+        }
+    });
+
+    document.getElementById('stt-process-btn').addEventListener('click', async () => {
+        if (!backendWs) return;
+        const btn = document.getElementById('stt-process-btn');
+        const output = document.getElementById('stt-output');
+        const blob = window._lastWavBlob;
+        if (!blob) {
+            output.innerHTML = '<span style="color:var(--accent);">No recording available. Record audio first.</span>';
+            return;
+        }
+        btn.disabled = true;
+        btn.innerText = 'Transcribing...';
+        output.innerHTML = '<span style="color:var(--text-dim);">Processing speech...</span>';
+        try {
+            const form = new FormData();
+            form.append('file', blob, 'recording.wav');
+            const resp = await fetch(`${backendBaseUrl}/api/stt/transcribe`, {
+                method: 'POST',
+                body: form
+            });
+            const data = await resp.json();
+            if (!resp.ok) throw new Error(data.detail || 'Transcribe failed');
+            const text = data.text || '(no speech detected)';
+            output.innerHTML = '';
+            const p = document.createElement('div');
+            p.style.fontSize = '0.9rem';
+            p.style.lineHeight = '1.5';
+            p.textContent = text;
+            output.appendChild(p);
+            if (text.startsWith('(Model is downloading')) {
+                setTimeout(() => document.getElementById('stt-process-btn').click(), 5000);
+            } else if (text && !text.startsWith('(STT') && !text.startsWith('(Model') && text !== '(no speech detected)') {
+                // Forward to AI Assistant if enabled
+                try {
+                    const execResp = await fetch(`${backendBaseUrl}/api/assistant/exec`, {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({text: text})
+                    });
+                    if (execResp.ok) {
+                        const execData = await execResp.json();
+                        const result = execData.result || 'Executed';
+                        const action = execData.command ? execData.command.action : '';
+                        addChatMessage(`🎤 "${text}"`, 'user');
+                        addChatMessage(`✅ ${result} (${action})`, 'ai');
+                        document.getElementById('recording-duration').innerText = result;
+                    }
+                } catch(e) {
+                    // Assistant not enabled, silent
+                }
+            }
+            console.log('STT result:', text);
+        } catch (e) {
+            output.innerHTML = `<span style="color:var(--accent);">Error: ${e.message}</span>`;
+            console.error('STT transcribe error:', e);
+        }
+        btn.innerText = 'Process Audio';
+        btn.disabled = false;
+    });
+
+    // --- AI Assistant ---
+    function addChatMessage(text, role) {
+        const container = document.getElementById('chat-messages');
+        const div = document.createElement('div');
+        div.className = 'chat-msg ' + role;
+        div.textContent = text;
+        container.appendChild(div);
+        container.scrollTop = container.scrollHeight;
+    }
+
+    document.getElementById('chat-send-btn').addEventListener('click', async () => {
+        const input = document.getElementById('chat-input');
+        const text = input.value.trim();
+        if (!text || !backendWs) return;
+        input.value = '';
+        addChatMessage(text, 'user');
+
+        try {
+            // Try assistant exec endpoint first
+            const resp = await fetch(`${backendBaseUrl}/api/assistant/exec`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({text: text})
+            });
+            if (resp.ok) {
+                const data = await resp.json();
+                const action = data.command ? data.command.action : 'unknown';
+                addChatMessage(`✅ ${data.result || 'Done'} (action: ${action})`, 'ai');
+            } else {
+                const data = await resp.json();
+                // Fall back to regular AI chat
+                if (data.detail && data.detail.includes('not enabled')) {
+                    addChatMessage('Assistant not enabled. Restart with --assistant', 'system');
+                    return;
+                }
+                const fallback = await fetch(`${backendBaseUrl}/api/ai/query`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({text: text})
+                });
+                if (!fallback.ok) throw new Error('Fallback failed');
+                const fb = await fallback.json();
+                addChatMessage(fb.response, 'ai');
+            }
+        } catch (e) {
+            addChatMessage('Error: ' + e.message, 'system');
+        }
+    });
+
+    document.getElementById('chat-input').addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') document.getElementById('chat-send-btn').click();
+    });
+
+    window.addEventListener('resize', () => {
+        resizeWaveform();
+        drawWaveform();
+    });
+
+    // Auto-connect to backend on page load (same origin, default port 8765)
+    (async function autoInit() {
+        const host = window.location.hostname || 'localhost';
+        const port = window.location.port || '8765';
+        const backendHost = document.getElementById('backend-host');
+        const backendPort = document.getElementById('backend-port');
+        if (backendHost) backendHost.value = host;
+        if (backendPort) backendPort.value = port;
+
+        if (host === 'localhost' || host === '127.0.0.1') {
+            await connectBackend(host, parseInt(port));
+        }
+    })();
 
 </script>
 </body>

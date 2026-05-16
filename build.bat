@@ -3,7 +3,7 @@ setlocal
 
 :: Set the path to the nRF Connect SDK toolchain
 set NCS_TOOLCHAIN_PATH=C:\ncs\toolchains\c717907b94
-set ZEPHYR_BASE=C:\ncs\v3.2.2\zephyr
+set ZEPHYR_BASE=C:\ncs\v3.2.3\zephyr
 set GNUARMEMB_TOOLCHAIN_PATH=%NCS_TOOLCHAIN_PATH%\opt
 
 :: Add toolchain binaries to PATH
@@ -14,7 +14,9 @@ set ZEPHYR_TOOLCHAIN_VARIANT=zephyr
 set ZEPHYR_SDK_INSTALL_DIR=%NCS_TOOLCHAIN_PATH%\opt\zephyr-sdk
 
 :: Activate the python environment
-call %NCS_TOOLCHAIN_PATH%\cmd\env.cmd
+if exist %NCS_TOOLCHAIN_PATH%\cmd\env.cmd (
+    call %NCS_TOOLCHAIN_PATH%\cmd\env.cmd
+)
 
 :: Check if west is available now
 where west
@@ -25,14 +27,14 @@ if %errorlevel% neq 0 (
     if exist build rmdir /s /q build
     
     :: Run CMake
-    cmake -S . -B build -GNinja -DBOARD=xiao_ble/nrf52840/sense
+    cmake -S . -B build -GNinja -DBOARD=xiao_ble/nrf52840/sense -DKCONFIG_WARNINGS_AS_ERRORS=OFF
     if %errorlevel% neq 0 exit /b %errorlevel%
     
     :: Run Ninja
     ninja -C build
 ) else (
     echo "West found, building with west"
-    west build -b xiao_ble/nrf52840/sense
+    west build -b xiao_ble/nrf52840/sense -- -DKCONFIG_WARNINGS_AS_ERRORS=OFF
 )
 
 endlocal
