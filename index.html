@@ -597,7 +597,7 @@
         <span class="backend-status" id="backend-status">Disconnected</span>
         <span style="width:1px;height:24px;background:var(--border);margin:0 4px;"></span>
         <span style="font-size:0.75rem;text-transform:uppercase;letter-spacing:1.5px;color:var(--text-dim);">BLE</span>
-        <button id="ble-connect-btn" style="padding:6px 16px;font-size:0.7rem;border-color:var(--text-dim);color:var(--text-dim);" disabled>nRF52</button>
+        <button id="ble-connect-btn" style="padding:6px 16px;font-size:0.7rem;border-color:var(--text-dim);color:var(--text-dim);">nRF52</button>
         <button id="ble-scan-btn" class="btn-sm" style="display:none;border-color:var(--text-dim);color:var(--text-dim);" disabled>Scan</button>
         <span class="backend-status" id="ble-status"><span style="color:var(--text-dim);">Offline</span></span>
     </div>
@@ -868,6 +868,7 @@
     let bluetoothDevice = null;
     let bluetoothServer = null;
     let manualDisconnect = false;
+    let bleConnected = false;
     let deviceName = '';
     let settingsService = null;
     let deepSleepActivated = false;
@@ -1085,6 +1086,7 @@
         bluetoothServer = null;
         window.currentBLEService = null;
         settingsService = null;
+        bleConnected = false;
         if (!deepSleepActivated) manualDisconnect = false;
     }
 
@@ -1330,47 +1332,44 @@
 
     document.getElementById('connect-btn').addEventListener('click', async () => {
         const btn = document.getElementById('connect-btn');
-        if (btn.innerText === 'DISCONNECT') {
-            await fetch(`${backendBaseUrl}/api/ble/disconnect`, {method:'POST'});
+        if (bluetoothDevice && bluetoothDevice.gatt.connected) {
+            disconnectDevice();
             return;
         }
         btn.innerText = 'CONNECTING...';
         btn.disabled = true;
         try {
-            // First ensure backend is connected
-            if (!backendWs) {
-                const host = document.getElementById('backend-host').value || 'localhost';
-                const port = parseInt(document.getElementById('backend-port').value) || 8765;
-                await connectBackend(host, port);
-            }
-            // Connect BLE via backend
-            const resp = await fetch(`${backendBaseUrl}/api/ble/connect`, {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({name: 'Skynet AI Beacon'})
+            const device = await navigator.bluetooth.requestDevice({
+                filters: [{ services: [SERVICE_UUID] }]
             });
-            if (resp.ok) {
-                btn.innerText = 'DISCONNECT';
-                btn.style.borderColor = 'var(--accent)';
-                document.getElementById('status-text').innerText = 'UPLINK ACTIVE';
-                document.getElementById('tactical-header').classList.add('connected');
-                document.getElementById('bt-peer').innerText = 'Skynet AI Beacon';
-                document.getElementById('ble-status').innerHTML = '<span style="color:var(--primary);">Online</span>';
-                document.getElementById('reset-btn').style.display = 'block';
-                document.getElementById('deepsleep-btn').style.display = 'block';
-                // Start sensors WS
-                connectSensorsWS();
-                // Start PSD/waterfall render loop
-                startRenderLoop();
-            } else {
-                const err = await resp.json();
-                btn.innerText = 'CONNECT FAILED';
-                setTimeout(() => { btn.innerText = 'CONNECT TO nRF52'; btn.disabled = false; }, 3000);
-                document.getElementById('ble-status').innerHTML = `<span style="color:var(--accent);">${err.detail || 'Failed'}</span>`;
-            }
+            bluetoothDevice = device;
+            deviceName = device.name || 'Skynet AI Beacon';
+            device.addEventListener('gattserverdisconnected', onDisconnected);
+            const server = await device.gatt.connect();
+            bluetoothServer = server;
+            const service = await server.getPrimaryService(SERVICE_UUID);
+            window.currentBLEService = service;
+            settingsService = service;
+            await startServicesAndRender(service);
+            btn.innerText = 'DISCONNECT';
+            btn.style.borderColor = 'var(--accent)';
+            btn.style.color = 'var(--accent)';
+            document.getElementById('status-text').innerText = 'UPLINK ACTIVE';
+            document.getElementById('tactical-header').classList.add('connected');
+            document.getElementById('bt-peer').innerText = deviceName;
+            document.getElementById('ble-status').innerHTML = '<span style="color:var(--primary);">Online</span>';
+            document.getElementById('reset-btn').style.display = 'block';
+            document.getElementById('deepsleep-btn').style.display = 'block';
+            bleConnected = true;
+            manualDisconnect = false;
+            startRenderLoop();
         } catch(e) {
             btn.innerText = 'CONNECT TO nRF52';
-            console.error('Connect error:', e);
+            if (e.name === 'NotFoundError') {
+                console.log('Web Bluetooth: user cancelled device selection');
+            } else {
+                console.error('Web Bluetooth connect error:', e);
+            }
         }
         btn.disabled = false;
     });
@@ -1478,30 +1477,6 @@
                         } else {
                             document.getElementById('ble-status').innerHTML = '<span style="color:var(--text-dim);">Offline</span>';
                         }
-                    } else if (msg.type === 'recording_vad') {
-                        const durEl = document.getElementById('recording-duration');
-                        if (msg.data.status === 'started') {
-                            durEl.innerText = '🎤 Voice activated...';
-                            document.getElementById('rec-ctrl-btn').innerText = '● REC';
-                            document.getElementById('rec-ctrl-btn').style.borderColor = 'var(--accent)';
-                        } else if (msg.data.status === 'stopped') {
-                            durEl.innerText = 'Voice recording: ' + (msg.data.duration_s || 0).toFixed(1) + 's';
-                        }
-                        } else if (msg.type === 'recording_ready') {
-                        const dur = msg.data.duration_s || 0;
-                        if (dur > 0.5) {
-                            document.getElementById('play-ctrl-btn').disabled = false;
-                            fetch(backendBaseUrl + (msg.data.url || '/api/audio/last_vad.wav'))
-                                .then(r => r.blob())
-                                .then(blob => {
-                                    window._lastWavBlob = blob;
-                                    if (audioUrl) URL.revokeObjectURL(audioUrl);
-                                    audioUrl = URL.createObjectURL(blob);
-                                    document.getElementById('audio-player').src = audioUrl;
-                                    document.getElementById('recording-duration').innerText =
-                                        '🎤 Recording: ' + dur.toFixed(1) + 's';
-                                });
-                        }
                     } else if (msg.type === 'assistant_result') {
                         const sttOut = document.getElementById('stt-output');
                         sttOut.innerHTML = '<div style="font-size:0.9rem">' + (msg.data.text || '') + '</div>';
@@ -1535,14 +1510,10 @@
         document.getElementById('chat-input').disabled = true;
         document.getElementById('chat-send-btn').disabled = true;
         document.getElementById('gain-slider').disabled = true;
-        document.getElementById('ble-connect-btn').disabled = true;
-        document.getElementById('ble-connect-btn').innerText = 'nRF52';
         document.getElementById('ble-scan-btn').style.display = 'none';
         document.getElementById('ble-scan-btn').disabled = true;
-        document.getElementById('ble-status').innerHTML = '<span style="color:var(--text-dim);">Offline</span>';
         document.getElementById('assistant-toggle-btn').style.display = 'none';
         document.getElementById('assistant-toggle-btn').disabled = true;
-        bleConnected = false;
         if (recState === 'rec') recStop();
         backendWs = null;
     }
@@ -1568,42 +1539,50 @@
     });
 
     document.getElementById('ble-connect-btn').addEventListener('click', async () => {
-        if (!backendWs) return;
         const btn = document.getElementById('ble-connect-btn');
         if (bleConnected) {
-            try {
-                await fetch(`${backendBaseUrl}/api/ble/disconnect`, {method: 'POST'});
-            } catch (e) {}
+            disconnectDevice();
+            btn.innerText = 'nRF52';
+            btn.style.borderColor = 'var(--text-dim)';
+            btn.style.color = 'var(--text-dim)';
+            document.getElementById('ble-status').innerHTML = '<span style="color:var(--text-dim);">Offline</span>';
             return;
         }
         btn.innerText = 'Connecting...';
         btn.disabled = true;
         try {
-            const resp = await fetch(`${backendBaseUrl}/api/ble/connect`, {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({name: 'Skynet AI Beacon'})
+            const device = await navigator.bluetooth.requestDevice({
+                filters: [{ services: [SERVICE_UUID] }]
             });
-            if (resp.ok) {
-                document.getElementById('ble-status').innerHTML = '<span style="color:var(--primary);">Online</span>';
-                btn.innerText = 'Disconnect BLE';
-                btn.style.borderColor = 'var(--accent)';
-                btn.style.color = 'var(--accent)';
-                bleConnected = true;
-            } else {
-                const err = await resp.json();
-                const detail = err.detail || err.message || 'Unknown error';
-                document.getElementById('ble-status').innerHTML = `<span style="color:var(--accent);">${detail}</span>`;
-                btn.innerText = 'Retry';
-                setTimeout(() => {
-                    btn.innerText = 'nRF52';
-                    btn.style.borderColor = 'var(--text-dim)';
-                    btn.style.color = 'var(--text-dim)';
-                }, 4000);
-            }
+            bluetoothDevice = device;
+            deviceName = device.name || 'Skynet AI Beacon';
+            device.addEventListener('gattserverdisconnected', onDisconnected);
+            const server = await device.gatt.connect();
+            bluetoothServer = server;
+            const service = await server.getPrimaryService(SERVICE_UUID);
+            window.currentBLEService = service;
+            settingsService = service;
+            await startServicesAndRender(service);
+            document.getElementById('ble-status').innerHTML = '<span style="color:var(--primary);">Online</span>';
+            document.getElementById('status-text').innerText = 'UPLINK ACTIVE';
+            document.getElementById('tactical-header').classList.add('connected');
+            document.getElementById('bt-peer').innerText = deviceName;
+            btn.innerText = 'Disconnect BLE';
+            btn.style.borderColor = 'var(--accent)';
+            btn.style.color = 'var(--accent)';
+            bleConnected = true;
+            manualDisconnect = false;
+            document.getElementById('connect-btn').innerText = 'DISCONNECT';
+            document.getElementById('connect-btn').style.borderColor = 'var(--accent)';
+            document.getElementById('connect-btn').style.color = 'var(--accent)';
+            document.getElementById('reset-btn').style.display = 'block';
+            document.getElementById('deepsleep-btn').style.display = 'block';
+            startRenderLoop();
         } catch (e) {
             btn.innerText = 'nRF52';
-            console.error('BLE connect error:', e);
+            if (e.name !== 'NotFoundError') {
+                console.error('BLE connect error:', e);
+            }
         }
         btn.disabled = false;
     });

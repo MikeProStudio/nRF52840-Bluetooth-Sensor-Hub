@@ -83,8 +83,6 @@ _session_buffer = bytearray()
 
 def on_audio_chunk(pcm_bytes: bytes):
     global _audio_chunk_count, _session_active, _session_buffer
-    global _vad_voice_active, _vad_voice_count, _vad_silence_count, _vad_log_count
-    global _vad_noise_floor, _vad_max_rms
     _audio_chunk_count += 1
     if _audio_chunk_count % 50 == 1:
         logger.info(f"on_audio_chunk #{_audio_chunk_count}: {len(pcm_bytes)} bytes, {len(audio_websockets)} ws")
@@ -93,56 +91,6 @@ def on_audio_chunk(pcm_bytes: bytes):
         _session_buffer.extend(pcm_bytes)
     stt_engine.feed_audio(pcm_bytes)
     _safe_create_task(broadcast_audio(pcm_bytes))
-
-    # PCM-based Voice Activity Detection
-    if len(pcm_bytes) >= 4:
-        import struct, math
-        n = len(pcm_bytes) // 2
-        samples = struct.unpack(f'<{n}h', pcm_bytes)
-        rms_val = int(math.sqrt(sum(s*s for s in samples) / n))
-
-        samples = struct.unpack(f'<{n}h', pcm_bytes)
-        rms_val = int(math.sqrt(sum(s*s for s in samples) / n))
-
-        _vad_log_count += 1
-
-        # Adaptive noise floor tracking (slowly rises, fast drops)
-        if rms_val < _vad_noise_floor or _vad_noise_floor == 0:
-            _vad_noise_floor = rms_val
-        elif not _vad_voice_active:
-            _vad_noise_floor = int(_vad_noise_floor * 0.99 + rms_val * 0.01)
-
-        adaptive_threshold = max(_vad_noise_floor * 3 + 1000, VAD_MIN_THRESHOLD)
-
-        # Track peak RMS during utterance
-        if rms_val > _vad_max_rms:
-            _vad_max_rms = rms_val
-
-        if _vad_log_count % 100 == 0:
-            logger.info("PCM-RMS=%d noise=%d thr=%d active=%s vc=%d sc=%d",
-                        rms_val, _vad_noise_floor, adaptive_threshold,
-                        _vad_voice_active, _vad_voice_count, _vad_silence_count)
-
-        if rms_val > adaptive_threshold:
-            _vad_voice_count += 1
-            _vad_silence_count = 0
-            if not _vad_voice_active and _vad_voice_count >= VAD_TRIGGER:
-                _vad_voice_active = True
-                _vad_voice_count = VAD_TRIGGER
-                _vad_max_rms = rms_val
-                logger.info("Voice! (RMS=%d noise=%d thr=%d mode=%s)",
-                            rms_val, _vad_noise_floor, adaptive_threshold,
-                            "AI" if _assistant_mode_active else "VAD")
-                asyncio.run_coroutine_threadsafe(_auto_start_recording(), _loop)
-        else:
-            _vad_silence_count += 1
-            _vad_voice_count = 0
-            if _vad_voice_active and _vad_silence_count >= VAD_SILENCE_END:
-                _vad_voice_active = False
-                _vad_silence_count = 0
-                _vad_noise_floor = int(_vad_noise_floor * 0.7 + rms_val * 0.3)
-                logger.info("Silence (RMS=%d noise=%d peak=%d)", rms_val, _vad_noise_floor, _vad_max_rms)
-                asyncio.run_coroutine_threadsafe(_auto_stop_recording(), _loop)
 
 
 async def broadcast_audio(pcm_bytes: bytes):
@@ -183,64 +131,6 @@ ble_client.on_disconnected = on_ble_disconnected
 ble_client.on_accel = lambda x, y, z: _broadcast_sensor("accel", {"x": round(x,2), "y": round(y,2), "z": round(z,2)})
 ble_client.on_gyro = lambda x, y, z: _broadcast_sensor("gyro", {"x": round(x,1), "y": round(y,1), "z": round(z,1)})
 
-# Voice activity detection + auto-recording (PCM-based, adaptive threshold)
-_vad_voice_active = False
-_vad_voice_count = 0
-_vad_silence_count = 0
-VAD_MIN_THRESHOLD = 5000  # minimum adaptive threshold (noise floor hits 4000, so 5000 catches speech)
-VAD_TRIGGER = 6        # consecutive frames above threshold to trigger start
-VAD_SILENCE_END = 40   # consecutive silence frames to stop
-_vad_log_count = 0
-_vad_noise_floor = 0   # adaptive noise floor tracking
-_vad_max_rms = 0       # peak RMS during current utterance
-VAD_MIN_THRESHOLD = 3000  # minimum adaptive threshold
-
-async def _auto_start_recording():
-    global _session_active, _session_buffer
-    if _session_active or not ble_client.is_connected:
-        return
-    _session_active = True
-    _session_buffer = bytearray()
-    logger.info("Voice-activated recording started")
-    broadcast_event("recording_vad", {"status": "started", "method": "voice"})
-
-async def _auto_stop_recording():
-    global _session_active, _session_buffer, _last_vad_wav
-    if not _session_active:
-        return
-    _session_active = False
-    pcm_data = bytes(_session_buffer)
-    _session_buffer = bytearray()
-    dur = len(pcm_data) / (16000 * 2)
-    logger.info(f"Voice-activated recording stopped: {dur:.1f}s")
-    broadcast_event("recording_vad", {"status": "stopped", "duration_s": round(dur, 1)})
-    if dur > 0.5:
-        import io, wave
-        buf = io.BytesIO()
-        with wave.open(buf, 'wb') as wf:
-            wf.setnchannels(1); wf.setsampwidth(2); wf.setframerate(16000)
-            wf.writeframes(pcm_data)
-        _last_vad_wav = buf.getvalue()
-        audio_buffer.write(pcm_data)
-        broadcast_event("recording_ready", {"duration_s": round(dur, 1), "url": "/api/audio/last_vad.wav"})
-
-        # Auto-execute: transcribe + assistant command
-        if _assistant_mode_active:
-            logger.info("Assistant mode: auto-transcribing...")
-            text = await asyncio.get_event_loop().run_in_executor(
-                None, stt_engine.process_file, pcm_data)
-            logger.info("Assistant mode STT: %s", text)
-            if text and not text.startswith("(STT") and not text.startswith("(Model"):
-                cmd = intent_parser.parse(text)
-                result = await action_exec.execute(cmd)
-                broadcast_event("assistant_result", {
-                    "text": text,
-                    "command": cmd,
-                    "result": result,
-                })
-                logger.info("Assistant: %s -> %s", text, result)
-
-_last_vad_wav = None
 _assistant_mode_active = False
 
 ble_client.on_audio_level = lambda rms, zcr: _broadcast_sensor("audio_level", {"rms": rms, "zcr": zcr})
@@ -584,13 +474,6 @@ async def test_tone_raw():
     return Response(content=buf.getvalue(), media_type="audio/wav")
 
 
-@app.get("/api/audio/last_vad.wav")
-async def last_vad_wav():
-    if _last_vad_wav is None:
-        raise HTTPException(404, "No VAD recording available")
-    return Response(content=_last_vad_wav, media_type="audio/wav",
-                    headers={"X-Audio-Duration": str(len(_last_vad_wav) / (16000*2*2))})
-
 # ── Session Recording (HTTP-based) ──
 @app.post("/api/audio/record/start")
 async def record_start():
@@ -754,12 +637,6 @@ def main():
     parser.add_argument("--stt-device", default="cpu",
                         choices=["cpu", "cuda", "auto"],
                         help="Device for STT inference")
-    parser.add_argument("--vad-threshold", type=int, default=5000,
-                        help="Minimum VAD threshold (adaptive, default: 5000)")
-    parser.add_argument("--vad-trigger", type=int, default=6,
-                        help="Consecutive frames above threshold to trigger recording (default: 6)")
-    parser.add_argument("--vad-silence", type=int, default=40,
-                        help="Consecutive frames below threshold to stop recording (default: 40)")
     parser.add_argument("--assistant", action="store_true",
                         help="Enable AI Assistant (Ollama + browser/PC control)")
     parser.add_argument("--assistant-model", default="llama3:8b",
@@ -770,10 +647,7 @@ def main():
         stt_engine.model_size = args.model
     if args.stt_device:
         stt_engine.device = args.stt_device
-    global VAD_TRIGGER, VAD_SILENCE_END, VAD_MIN_THRESHOLD, _assistant_enabled
-    VAD_MIN_THRESHOLD = args.vad_threshold
-    VAD_TRIGGER = args.vad_trigger
-    VAD_SILENCE_END = args.vad_silence
+    global _assistant_enabled
     if args.assistant:
         _assistant_enabled = True
         intent_parser.model = args.assistant_model
