@@ -63,6 +63,7 @@ static const struct adc_dt_spec adc_channel = ADC_DT_SPEC_GET_BY_IDX(DT_PATH(zep
 #define BT_UUID_RESET_CHRC_VAL     BT_UUID_128_ENCODE(0x12345678, 0x1234, 0x5678, 0x1234, 0x56789abcdef6)
 #define BT_UUID_AUDIO_STREAM_CHRC_VAL BT_UUID_128_ENCODE(0x12345678, 0x1234, 0x5678, 0x1234, 0x56789abcdef8)
 #define BT_UUID_OLED_SETTINGS_CHRC_VAL BT_UUID_128_ENCODE(0x12345678, 0x1234, 0x5678, 0x1234, 0x56789abcdef7)
+#define BT_UUID_LIVE_AUDIO_CTRL_CHRC_VAL BT_UUID_128_ENCODE(0x12345678, 0x1234, 0x5678, 0x1234, 0x56789abcdef9)
 
 #define BT_UUID_CUSTOM_SERVICE  BT_UUID_DECLARE_128(BT_UUID_CUSTOM_SERVICE_VAL)
 #define BT_UUID_ACCEL_CHRC      BT_UUID_DECLARE_128(BT_UUID_ACCEL_CHRC_VAL)
@@ -73,6 +74,7 @@ static const struct adc_dt_spec adc_channel = ADC_DT_SPEC_GET_BY_IDX(DT_PATH(zep
 #define BT_UUID_BATTERY_CHRC    BT_UUID_DECLARE_128(BT_UUID_BATTERY_CHRC_VAL)
 #define BT_UUID_RESET_CHRC      BT_UUID_DECLARE_128(BT_UUID_RESET_CHRC_VAL)
 #define BT_UUID_OLED_SETTINGS_CHRC BT_UUID_DECLARE_128(BT_UUID_OLED_SETTINGS_CHRC_VAL)
+#define BT_UUID_LIVE_AUDIO_CTRL_CHRC BT_UUID_DECLARE_128(BT_UUID_LIVE_AUDIO_CTRL_CHRC_VAL)
 
 /* Sichere Indizes für GATT-Charakteristiken (verhindert Magic Numbers) */
 enum {
@@ -85,7 +87,10 @@ enum {
 	IDX_BATTERY_VAL = 17,
 	IDX_RESET_VAL = 20,
 	IDX_OLED_SETTINGS_VAL = 22,
+	IDX_LIVE_AUDIO_CTRL_VAL = 24,
 };
+
+static volatile bool live_audio_active;
 
 /* Data structures for BLE transmission */
 struct imu_data_t {
@@ -186,6 +191,7 @@ static k_tid_t main_thread_id;
 
 /* OLED + BT state */
 static bool bt_connected_flag;
+static bool adv_should_run = true;
 static uint8_t oled_phase;
 static struct k_work_delayable oled_work;
 static uint8_t oled_sub_phase;
@@ -395,6 +401,15 @@ static ssize_t write_reset(struct bt_conn *conn, const struct bt_gatt_attr *attr
 		printk("WAKE FROM DEEP SLEEP VIA RESET CHAR\n");
 		wake_from_deep_sleep();
 	}
+	if (val == 5) {
+		printk("FORCE DISCONNECT + RESTART ADVERTISING\n");
+		bt_connected_flag = false;
+		adv_should_run = true;
+		oled_phase = PHASE_BEACON;
+		oled_sub_phase = 0;
+		k_work_reschedule_for_queue(&oled_work_q, &oled_work, K_NO_WAIT);
+		start_advertising();
+	}
 	return len;
 }
 
@@ -440,6 +455,18 @@ static ssize_t write_oled_settings(struct bt_conn *conn, const struct bt_gatt_at
 	return len;
 }
 
+static ssize_t write_live_audio_ctrl(struct bt_conn *conn,
+				     const struct bt_gatt_attr *attr,
+				     const void *buf, uint16_t len,
+				     uint16_t offset, uint8_t flags)
+{
+	if (len != 1) return BT_GATT_ERR(BT_ATT_ERR_INVALID_ATTRIBUTE_LEN);
+	uint8_t val = ((uint8_t *)buf)[0];
+	live_audio_active = (val != 0);
+	printk("Live Audio: %s\n", live_audio_active ? "START" : "STOP");
+	return len;
+}
+
 /* Service declaration */
 BT_GATT_SERVICE_DEFINE(custom_svc,
 	BT_GATT_PRIMARY_SERVICE(BT_UUID_CUSTOM_SERVICE),
@@ -459,6 +486,8 @@ BT_GATT_SERVICE_DEFINE(custom_svc,
 	BT_GATT_CHARACTERISTIC(BT_UUID_RESET_CHRC, BT_GATT_CHRC_WRITE, BT_GATT_PERM_WRITE, NULL, write_reset, NULL),
 	BT_GATT_CHARACTERISTIC(BT_UUID_OLED_SETTINGS_CHRC, BT_GATT_CHRC_READ | BT_GATT_CHRC_WRITE,
 			       BT_GATT_PERM_READ | BT_GATT_PERM_WRITE, read_oled_settings, write_oled_settings, &oled_settings),
+	BT_GATT_CHARACTERISTIC(BT_UUID_LIVE_AUDIO_CTRL_CHRC, BT_GATT_CHRC_WRITE,
+			       BT_GATT_PERM_WRITE, NULL, write_live_audio_ctrl, NULL),
 );
 
 /* --- Calibration & Timing --- */
@@ -569,7 +598,7 @@ static void update_tx_power_based_on_battery_impl(void)
 }
 
 static uint32_t generated_passkey = 0;
-static char device_name_with_pin[32] = "Skynet AI Beacon";
+static char device_name_with_pin[32] = "Skynet AI Beacon"; /* Wird überschrieben, bleibt als Fallback */
 
 static struct bt_data ad[] = {
 	BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
@@ -591,6 +620,7 @@ static void connected(struct bt_conn *conn, uint8_t err)
 	} else {
 		printk("Connected.\n");
 		bt_connected_flag = true;
+		adv_should_run = false;
 		oled_phase = PHASE_CONNECTED;
 		oled_sub_phase = 0;
 		page_start_time = k_uptime_get();
@@ -604,6 +634,7 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
 {
 	printk("Disconnected (reason 0x%02x)\n", reason);
 	bt_connected_flag = false;
+	adv_should_run = true;
 	oled_phase = PHASE_BEACON;
 	oled_sub_phase = 0;
 	k_work_reschedule_for_queue(&oled_work_q, &oled_work, K_NO_WAIT);
@@ -1407,6 +1438,7 @@ int main(void) {
 			.bt_connected = &bt_connected_flag,
 			.deepsleep_block_notify = &deepsleep_block_notify,
 			.deepsleep_send_once_audio = &deepsleep_send_once_audio,
+			.live_audio_active = &live_audio_active,
 			.oled_settings = &oled_settings,
 		};
 		audio_stream_start(&stream_cfg);
@@ -1459,6 +1491,9 @@ int main(void) {
 			deepsleep_oled_wake();
 			k_work_reschedule_for_queue(&oled_work_q, &oled_work, K_NO_WAIT);
 		} else {
+			if (adv_should_run && !bt_connected_flag) {
+				start_advertising();
+			}
 			k_msleep(500);
 		}
 	}

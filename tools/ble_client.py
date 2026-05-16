@@ -279,15 +279,20 @@ class BLEClient:
 
     async def disconnect(self):
         self._running = False
-        if self.client and self.client.is_connected:
+        if self.client:
             try:
-                await self.client.stop_notify(AUDIO_STREAM_CHRC_UUID)
+                for uuid in [AUDIO_STREAM_CHRC_UUID, ACCEL_CHRC_UUID, GYRO_CHRC_UUID,
+                             AUDIO_CHRC_UUID, BATTERY_CHRC_UUID, TX_POWER_CHRC_UUID]:
+                    try:
+                        await self.client.stop_notify(uuid)
+                    except Exception:
+                        pass
             except Exception:
                 pass
             try:
                 await self.client.disconnect()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"BLE disconnect error: {e}")
         if self.on_disconnected:
             self.on_disconnected()
 

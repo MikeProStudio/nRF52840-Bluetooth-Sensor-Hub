@@ -638,6 +638,7 @@
                 <button id="play-ctrl-btn" disabled>Play</button>
                 <button id="testtone-btn" style="padding:8px 14px;font-size:0.7rem;border-color:var(--text-dim);color:var(--text-dim);">Test Tone</button>
                 <button id="assistant-toggle-btn" style="display:none;padding:8px 14px;font-size:0.7rem;" disabled>AI Mode: OFF</button>
+                <button id="live-audio-btn" disabled style="padding:8px 14px;font-size:0.7rem;border-color:var(--primary);color:var(--primary);">🔴 Live Audio</button>
             </div>
             <audio id="audio-player" style="display:none" controls></audio>
             <div class="gain-row">
@@ -687,6 +688,36 @@
     const BATTERY_CHAR = '12345678-1234-5678-1234-56789abcdef5';
     const RESET_CHAR = '12345678-1234-5678-1234-56789abcdef6';
     const OLED_SETTINGS_CHAR = '12345678-1234-5678-1234-56789abcdef7';
+    const LIVE_AUDIO_CTRL_CHAR = '12345678-1234-5678-1234-56789abcdef9';
+    const AUDIO_STREAM_CHAR = '12345678-1234-5678-1234-56789abcdef8';
+
+    // IMA ADPCM Decoder
+    const ADPCM_STEP_TABLE = new Int32Array([7,8,9,10,11,12,13,14,16,17,19,21,23,25,28,31,34,37,41,45,50,55,60,66,73,80,88,97,107,118,130,143,157,173,190,209,230,253,279,307,337,371,408,449,494,544,598,658,724,796,876,963,1060,1166,1282,1411,1552,1707,1878,2066,2272,2499,2749,3024,3327,3660,4026,4428,4871,5358,5894,6484,7132,7845,8630,9493,10442,11487,12635,13899,15289,16818,18500,20350,22385,24623,27086,29794,32767]);
+    const ADPCM_IDX_ADJ = new Int8Array([-1,-1,-1,-1,2,4,6,8]);
+
+    function adpcmDecode(data, state) {
+        const out = new Int16Array(data.length * 2);
+        let oi = 0;
+        for (let b = 0; b < data.length; b++) {
+            for (let shift = 4; shift >= 0; shift -= 4) {
+                const nib = (data[b] >> shift) & 0x0F;
+                const step = ADPCM_STEP_TABLE[state.stepIndex];
+                let diff = step >> 3;
+                if (nib & 4) diff += step;
+                if (nib & 2) diff += step >> 1;
+                if (nib & 1) diff += step >> 2;
+                if (nib & 8) state.predictor -= diff;
+                else state.predictor += diff;
+                if (state.predictor > 32767) state.predictor = 32767;
+                else if (state.predictor < -32768) state.predictor = -32768;
+                state.stepIndex += ADPCM_IDX_ADJ[nib & 7];
+                if (state.stepIndex < 0) state.stepIndex = 0;
+                else if (state.stepIndex > 88) state.stepIndex = 88;
+                out[oi++] = state.predictor;
+            }
+        }
+        return out;
+    }
 
     // --- Senior Dev: NFC Comfort Trick PIN Parsing & Timer ---
     const urlParams = new URLSearchParams(window.location.search);
@@ -900,6 +931,10 @@
     let deviceName = '';
     let settingsService = null;
     let deepSleepActivated = false;
+    let localAudioPcm = [];
+    let localAdpcmState = { predictor: 0, stepIndex: 0 };
+    let localRecording = false;
+    let localRecordingStartTime = 0;
 
     // --- Settings Panel ---
     function openSettingsPanel() {
@@ -1103,6 +1138,13 @@
 
     async function disconnectDevice() {
         manualDisconnect = true;
+        if (bluetoothDevice && settingsService) {
+            console.log("Senior-UI: Sending pre-disconnect signal...");
+            try {
+                const c = await settingsService.getCharacteristic(RESET_CHAR);
+                await c.writeValue(new Uint8Array([5]));
+            } catch (e) { console.log("Senior-UI: Pre-disconnect write error", e); }
+        }
         if (bluetoothDevice) {
             console.log("Senior-UI: Explicitly disconnecting GATT server...");
             try {
@@ -1126,6 +1168,11 @@
         btn.classList.remove('disconnect');
         document.getElementById('reset-btn').style.display = 'none';
         document.getElementById('deepsleep-btn').style.display = 'none';
+        document.getElementById('live-audio-btn').disabled = true;
+        liveAudioActive = false;
+        document.getElementById('live-audio-btn').innerText = '🔴 Live Audio';
+        document.getElementById('live-audio-btn').style.borderColor = '';
+        document.getElementById('live-audio-btn').style.color = '';
         stopRenderLoop();
         if (bluetoothDevice) {
             try { bluetoothDevice.removeEventListener('gattserverdisconnected', onDisconnected); } catch(e) {}
@@ -1164,6 +1211,11 @@
         btn.classList.remove('disconnect');
         document.getElementById('reset-btn').style.display = 'none';
         document.getElementById('deepsleep-btn').style.display = 'none';
+        document.getElementById('live-audio-btn').disabled = true;
+        liveAudioActive = false;
+        document.getElementById('live-audio-btn').innerText = '🔴 Live Audio';
+        document.getElementById('live-audio-btn').style.borderColor = '';
+        document.getElementById('live-audio-btn').style.color = '';
         
         stopRenderLoop();
         
@@ -1363,6 +1415,32 @@
             lastPsdData = new Float32Array(fftData);
         }, true);
 
+        // Subscribe to raw ADPCM audio stream (decode in browser)
+        await secureSetupNotify(AUDIO_STREAM_CHAR, (v) => {
+            const data = new Uint8Array(v.buffer);
+            if (data.length < 2) return;
+            const header = data[0];
+            const isSync = (header & 0x80) === 0;
+            if (isSync) {
+                localAdpcmState = { predictor: 0, stepIndex: 0 };
+            }
+            const adpcmPayload = data.slice(1);
+            const pcm = adpcmDecode(adpcmPayload, localAdpcmState);
+            if (localRecording) {
+                for (let i = 0; i < pcm.length; i++) localAudioPcm.push(pcm[i]);
+            }
+            if (window._liveWaveform) {
+                updateWaveform(pcm);
+                for (let i = 0; i < pcm.length; i++) {
+                    ringBuf[ringHead] = pcm[i];
+                    ringHead = (ringHead + 1) % ringBuf.length;
+                    if (ringHead === ringTail) {
+                        ringTail = (ringTail + 1) % ringBuf.length;
+                    }
+                }
+            }
+        }, true);
+
         document.getElementById('reset-btn').onclick = async () => {
             if (!confirm("System will enter UF2 Bootloader Mode. Current session will end. Proceed?")) return;
             try {
@@ -1381,6 +1459,7 @@
             } catch (e) { console.error("Reset failed", e); }
         };
 
+        document.getElementById('live-audio-btn').disabled = false;
         startRenderLoop();
     }
 
@@ -1420,6 +1499,7 @@
             document.getElementById('ble-status').innerHTML = '<span style="color:var(--primary);">Online</span>';
             document.getElementById('reset-btn').style.display = 'block';
             document.getElementById('deepsleep-btn').style.display = 'block';
+            document.getElementById('live-audio-btn').disabled = false;
             bleConnected = true;
             manualDisconnect = false;
             startRenderLoop();
@@ -1438,7 +1518,6 @@
     let backendWs = null;
     let backendBaseUrl = '';
     let recordingTimerId = null;
-    let recordingStartTime = 0;
     let audioQueue = [];
     let autoConnectDone = false;
 
@@ -1524,19 +1603,29 @@
                             }
                         }
                     }).catch(() => {});
+                document.getElementById('live-audio-btn').disabled = false;
                 console.log('Backend connected');
             };
             backendWs.onmessage = (event) => {
                 try {
                     const msg = JSON.parse(event.data);
                     if (msg.type === 'status') {
+                        const bleEl = document.getElementById('ble-status');
                         if (msg.data.notifications_alive) {
-                            document.getElementById('ble-status').innerHTML = '<span style="color:var(--primary);">Online</span>';
+                            bleEl.innerHTML = '<span style="color:var(--primary);">Online</span>';
+                            document.getElementById('live-audio-btn').disabled = false;
                         } else if (msg.data.connected) {
-                            document.getElementById('ble-status').innerHTML = '<span style="color:var(--audio);">Connecting...</span>';
+                            bleEl.innerHTML = '<span style="color:var(--audio);">Connecting...</span>';
                         } else {
-                            document.getElementById('ble-status').innerHTML = '<span style="color:var(--text-dim);">Offline</span>';
+                            bleEl.innerHTML = '<span style="color:var(--text-dim);">Offline</span>';
                         }
+                    } else if (msg.type === 'ble_connected') {
+                        document.getElementById('ble-status').innerHTML = '<span style="color:var(--primary);">Online</span>';
+                        document.getElementById('live-audio-btn').disabled = false;
+                    } else if (msg.type === 'ble_disconnected') {
+                        document.getElementById('ble-status').innerHTML = '<span style="color:var(--text-dim);">Offline</span>';
+                    } else if (msg.type === 'live_audio') {
+                        // Status update from backend live audio control, ignore (handled by button state)
                     } else if (msg.type === 'assistant_result') {
                         const sttOut = document.getElementById('stt-output');
                         sttOut.innerHTML = '<div style="font-size:0.9rem">' + (msg.data.text || '') + '</div>';
@@ -1574,6 +1663,11 @@
         document.getElementById('ble-scan-btn').disabled = true;
         document.getElementById('assistant-toggle-btn').style.display = 'none';
         document.getElementById('assistant-toggle-btn').disabled = true;
+        document.getElementById('live-audio-btn').disabled = true;
+        liveAudioActive = false;
+        document.getElementById('live-audio-btn').innerText = '🔴 Live Audio';
+        document.getElementById('live-audio-btn').style.borderColor = '';
+        document.getElementById('live-audio-btn').style.color = '';
         if (recState === 'rec') recStop();
         backendWs = null;
     }
@@ -1600,54 +1694,54 @@
 
     document.getElementById('ble-connect-btn').addEventListener('click', async () => {
         const btn = document.getElementById('ble-connect-btn');
-        if (bleConnected) {
-            disconnectDevice();
+        const statusEl = document.getElementById('ble-status');
+
+        if (btn.innerText === 'Disconnect BLE') {
+            try {
+                await fetch(`${backendBaseUrl}/api/ble/disconnect`, {method:'POST'});
+            } catch(e) {
+                console.error('BLE disconnect failed:', e);
+            }
             btn.innerText = 'nRF52';
             btn.style.borderColor = 'var(--text-dim)';
             btn.style.color = 'var(--text-dim)';
-            document.getElementById('ble-status').innerHTML = '<span style="color:var(--text-dim);">Offline</span>';
+            statusEl.innerHTML = '<span style="color:var(--text-dim);">Offline</span>';
+            document.getElementById('live-audio-btn').disabled = true;
+            liveAudioActive = false;
+            document.getElementById('recording-duration').innerText = '';
             return;
         }
-        if (!navigator.bluetooth) {
-            btn.innerText = 'N/A';
-            setTimeout(() => { btn.innerText = 'nRF52'; }, 3000);
+
+        if (!backendBaseUrl) {
+            statusEl.innerHTML = '<span style="color:var(--accent);">Backend not connected</span>';
             return;
         }
+
         btn.innerText = 'Connecting...';
         btn.disabled = true;
+        statusEl.innerHTML = '<span style="color:var(--audio);">Connecting via backend...</span>';
+
         try {
-            const device = await navigator.bluetooth.requestDevice({
-                filters: [{ services: [SERVICE_UUID] }]
+            const resp = await fetch(`${backendBaseUrl}/api/ble/connect`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({name: 'Skynet AI Beacon'})
             });
-            bluetoothDevice = device;
-            deviceName = device.name || 'Skynet AI Beacon';
-            device.addEventListener('gattserverdisconnected', onDisconnected);
-            const server = await device.gatt.connect();
-            bluetoothServer = server;
-            const service = await server.getPrimaryService(SERVICE_UUID);
-            window.currentBLEService = service;
-            settingsService = service;
-            await startServicesAndRender(service);
-            document.getElementById('ble-status').innerHTML = '<span style="color:var(--primary);">Online</span>';
-            document.getElementById('status-text').innerText = 'UPLINK ACTIVE';
-            document.getElementById('tactical-header').classList.add('connected');
-            document.getElementById('bt-peer').innerText = deviceName;
+            if (!resp.ok) {
+                const err = await resp.json();
+                throw new Error(err.detail || 'Backend BLE connect failed');
+            }
+            const data = await resp.json();
+            statusEl.innerHTML = '<span style="color:var(--primary);">Online</span>';
             btn.innerText = 'Disconnect BLE';
             btn.style.borderColor = 'var(--accent)';
             btn.style.color = 'var(--accent)';
-            bleConnected = true;
-            manualDisconnect = false;
-            document.getElementById('connect-btn').innerText = 'DISCONNECT';
-            document.getElementById('connect-btn').style.borderColor = 'var(--accent)';
-            document.getElementById('connect-btn').style.color = 'var(--accent)';
-            document.getElementById('reset-btn').style.display = 'block';
-            document.getElementById('deepsleep-btn').style.display = 'block';
-            startRenderLoop();
+            document.getElementById('live-audio-btn').disabled = false;
+            document.getElementById('recording-duration').innerText = 'BLE: ' + (data.device || 'Online');
         } catch (e) {
+            statusEl.innerHTML = `<span style="color:var(--accent);">${e.message}</span>`;
             btn.innerText = 'nRF52';
-            if (e.name !== 'NotFoundError') {
-                console.error('BLE connect error:', e);
-            }
+            console.error('Backend BLE connect error:', e);
         }
         btn.disabled = false;
     });
@@ -1693,63 +1787,126 @@
         }
     });
 
+    // ── Live Audio Mode ──
+    let liveAudioActive = false;
+    let audioCtx = null;
+    let ringBuf = new Int16Array(16384);
+    let ringHead = 0, ringTail = 0;
+
+    function liveAudioStart() {
+        if (audioCtx) return;
+        try {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)({sampleRate: 16000});
+        } catch(e) { console.error('AudioContext failed:', e); return; }
+        const bufSize = 2048;
+        const proc = audioCtx.createScriptProcessor(bufSize, 1, 1);
+        proc.onaudioprocess = (e) => {
+            const out = e.outputBuffer.getChannelData(0);
+            const count = bufSize;
+            for (let i = 0; i < count; i++) {
+                if (ringHead !== ringTail) {
+                    out[i] = ringBuf[ringTail] / 32768.0;
+                    ringTail = (ringTail + 1) % ringBuf.length;
+                } else {
+                    out[i] = 0;
+                }
+            }
+        };
+        proc.connect(audioCtx.destination);
+    }
+
+    function liveAudioStop() {
+        if (audioCtx) { audioCtx.close(); audioCtx = null; }
+        ringHead = 0; ringTail = 0;
+    }
+
+    document.getElementById('live-audio-btn').addEventListener('click', async () => {
+        const btn = document.getElementById('live-audio-btn');
+        const durEl = document.getElementById('recording-duration');
+
+        if (!bluetoothDevice && !settingsService) return;
+
+        if (!liveAudioActive) {
+            if (settingsService) {
+                try {
+                    const c = await settingsService.getCharacteristic(LIVE_AUDIO_CTRL_CHAR);
+                    await c.writeValue(new Uint8Array([1]));
+                } catch(e) { /* optional control char */ }
+            } else if (backendBaseUrl) {
+                try { await fetch(`${backendBaseUrl}/api/liveaudio/start`, {method:'POST'}); } catch(e) {}
+            }
+            liveAudioActive = true;
+            window._liveWaveform = true;
+            liveAudioStart();
+            btn.innerText = '⏹ Stop Live Audio';
+            btn.style.borderColor = 'var(--accent)';
+            btn.style.color = 'var(--accent)';
+            durEl.innerText = '🔴 LIVE AUDIO';
+            console.log('Live Audio: STARTED (WebBT)');
+        } else {
+            if (settingsService) {
+                try {
+                    const c = await settingsService.getCharacteristic(LIVE_AUDIO_CTRL_CHAR);
+                    await c.writeValue(new Uint8Array([0]));
+                } catch(e) { /* optional */ }
+            } else if (backendBaseUrl) {
+                try { await fetch(`${backendBaseUrl}/api/liveaudio/stop`, {method:'POST'}); } catch(e) {}
+            }
+            liveAudioActive = false;
+            window._liveWaveform = false;
+            liveAudioStop();
+            btn.innerText = '🔴 Live Audio';
+            btn.style.borderColor = '';
+            btn.style.color = '';
+            durEl.innerText = '';
+        }
+    });
+
     // ── Audio Recording & Playback (HTTP-based) ──
-    let recState = 'idle'; // idle | rec
+    let recState = 'idle';
     let audioUrl = null;
-    let _liveWs = null;
-    let _livePkt = 0;
 
     function fmtDur(sec) { const m=String(Math.floor(sec/60)).padStart(2,'0'); const s=String(Math.floor(sec%60)).padStart(2,'0'); return m+':'+s; }
 
     async function recStart() {
-        if (recState !== 'idle' || !backendWs) return;
-        const r = await fetch(backendBaseUrl + '/api/audio/record/start', {method:'POST'});
-        if (!r.ok) { console.error('rec start failed'); return; }
-        const result = await r.json();
-        if (!result.ble_connected) {
-            console.error('BLE not connected! Recording will be empty.');
-            document.getElementById('recording-duration').innerText = '⚠ BLE not connected!';
-            return;
-        }
-        recState = 'rec'; recordingStartTime = Date.now();
+        if (recState !== 'idle') return;
+        localAudioPcm = [];
+        localRecording = true;
+        recState = 'rec';
+        localRecordingStartTime = Date.now();
         document.getElementById('rec-ctrl-btn').innerText = 'Stop';
         document.getElementById('rec-ctrl-btn').style.borderColor = 'var(--accent)';
         document.getElementById('rec-ctrl-btn').style.color = 'var(--accent)';
         document.getElementById('play-ctrl-btn').disabled = true;
         recordingTimerId = setInterval(updateRecordingTimer, 500);
-        // Open live waveform WS
-        _livePkt = 0;
-        _liveWs = new WebSocket(backendBaseUrl.replace('http','ws') + '/ws/audio');
-        _liveWs.binaryType = 'arraybuffer';
-        _liveWs.onmessage = e => { _livePkt++; updateWaveform(new Int16Array(e.data)); };
-        _liveWs.onclose = () => console.log('Live WS closed');
-        console.log('Recording started');
+        console.log('Recording started (local)');
     }
 
     async function recStop() {
         if (recState !== 'rec') return;
         recState = 'idle';
+        localRecording = false;
         if (recordingTimerId) { clearInterval(recordingTimerId); recordingTimerId = null; }
-        if (_liveWs) { _liveWs.close(); _liveWs = null; }
         document.getElementById('rec-ctrl-btn').innerText = 'Record';
         document.getElementById('rec-ctrl-btn').style.borderColor = 'var(--primary)';
         document.getElementById('rec-ctrl-btn').style.color = 'var(--primary)';
 
-        // Fetch WAV from server
-        const r = await fetch(backendBaseUrl + '/api/audio/record/stop', {method:'POST'});
-        if (!r.ok) { console.error('rec stop failed'); return; }
-        const wavBlob = await r.blob();
-        window._lastWavBlob = wavBlob;
+        const samples = new Int16Array(localAudioPcm);
+        if (samples.length === 0) {
+            document.getElementById('recording-duration').innerText = 'Duration: 00:00 (no data)';
+            return;
+        }
+        const wav = createWavBlob(samples, 16000);
+        window._lastWavBlob = wav;
         if (audioUrl) URL.revokeObjectURL(audioUrl);
-        audioUrl = URL.createObjectURL(wavBlob);
+        audioUrl = URL.createObjectURL(wav);
         const player = document.getElementById('audio-player');
         player.src = audioUrl;
         player.style.display = 'block';
         document.getElementById('play-ctrl-btn').disabled = false;
-        const dur = parseFloat(r.headers.get('X-Audio-Duration')) || 0;
+        const dur = samples.length / 16000;
         document.getElementById('recording-duration').innerText = 'Duration: ' + fmtDur(dur);
-        console.log('Recording stopped: ' + fmtDur(dur));
-        drawTimeline(null, 0);
+        console.log('Recording stopped: ' + fmtDur(dur) + ', ' + samples.length + ' samples');
     }
 
     function recToggle() {
@@ -1765,8 +1922,39 @@
 
     function updateRecordingTimer() {
         if (recState !== 'rec') return;
-        const elapsed = Math.floor((Date.now() - recordingStartTime) / 1000);
+        const elapsed = Math.floor((Date.now() - localRecordingStartTime) / 1000);
         document.getElementById('recording-duration').innerText = 'Recording: ' + fmtDur(elapsed);
+    }
+
+    function createWavBlob(samples, sampleRate) {
+        const numChannels = 1, bitsPerSample = 16;
+        const byteRate = sampleRate * numChannels * bitsPerSample / 8;
+        const blockAlign = numChannels * bitsPerSample / 8;
+        const dataSize = samples.length * (bitsPerSample / 8);
+        const buf = new ArrayBuffer(44 + dataSize);
+        const view = new DataView(buf);
+        writeStr(view, 0, 'RIFF');
+        view.setUint32(4, 36 + dataSize, true);
+        writeStr(view, 8, 'WAVE');
+        writeStr(view, 12, 'fmt ');
+        view.setUint32(16, 16, true);
+        view.setUint16(20, 1, true);
+        view.setUint16(22, numChannels, true);
+        view.setUint32(24, sampleRate, true);
+        view.setUint32(28, byteRate, true);
+        view.setUint16(32, blockAlign, true);
+        view.setUint16(34, bitsPerSample, true);
+        writeStr(view, 36, 'data');
+        view.setUint32(40, dataSize, true);
+        let offset = 44;
+        for (let i = 0; i < samples.length; i++, offset += 2) {
+            view.setInt16(offset, samples[i], true);
+        }
+        return new Blob([buf], { type: 'audio/wav' });
+    }
+
+    function writeStr(view, offset, str) {
+        for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i));
     }
 
     function drawTimeline(pcmInt16, progress) {

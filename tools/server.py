@@ -176,6 +176,7 @@ async def lifespan(app: FastAPI):
     logger.info(f"Open http://localhost:8765/ in your browser")
     logger.info(f"Add --assistant for AI voice control (Ollama + Playwright)")
     logger.info("=" * 50)
+
     yield
     logger.info("Shutting down...")
     if ble_client.is_connected:
@@ -230,10 +231,8 @@ async def set_gain(body: GainModel):
 async def ble_connect(body: DeviceModel = DeviceModel()):
     if ble_client.is_connected:
         raise HTTPException(400, "Already connected")
-
     ble_client.device_name = body.name
     logger.info(f"Connecting to BLE device '{body.name}'...")
-
     try:
         await asyncio.wait_for(ble_client.connect(), timeout=20.0)
         logger.info(f"BLE connected: {ble_client.device_name}")
@@ -247,7 +246,7 @@ async def ble_connect(body: DeviceModel = DeviceModel()):
         except Exception as e:
             logger.warning(f"Service discovery failed: {e}")
 
-        return {"status": "connected", "device": ble_client.device_name}
+        return {"status": "connected", "device": ble_client.device_name, "notifications_alive": ble_client.notifications_alive}
     except asyncio.TimeoutError:
         logger.error("BLE connect timed out after 20s")
         raise HTTPException(504, "BLE connect timed out. Check that the device is advertising and in range.")
@@ -276,32 +275,56 @@ async def ble_scan(timeout: int = 8):
         raise HTTPException(500, f"Scan failed: {e}")
 
 
-@app.post("/api/ble/connect")
-async def ble_connect(body: DeviceModel = DeviceModel()):
-    if ble_client.is_connected:
-        raise HTTPException(400, "Already connected")
-    ble_client.device_name = body.name
-    logger.info(f"Connecting to BLE device '{body.name}'...")
-    try:
-        await asyncio.wait_for(ble_client.connect(), timeout=20.0)
-        logger.info(f"BLE connected: {ble_client.device_name}")
-        return {"status": "connected", "device": ble_client.device_name, "notifications_alive": ble_client.notifications_alive}
-    except asyncio.TimeoutError:
-        raise HTTPException(504, "BLE connect timed out")
-    except ConnectionError as e:
-        raise HTTPException(502, str(e))
-    except Exception as e:
-        raise HTTPException(500, f"Unexpected error: {e}")
-
-
 @app.post("/api/ble/disconnect")
 async def ble_disconnect():
     await ble_client.disconnect()
+    broadcast_event("ble_disconnected", {})
+    logger.info("BLE disconnected via API")
 
+
+# ── Live Audio Control ──
+_live_audio_active = False
+
+@app.post("/api/liveaudio/start")
+async def live_audio_start():
+    global _live_audio_active
+    if not ble_client.is_connected or ble_client.client is None:
+        raise HTTPException(400, "BLE not connected")
+    try:
+        ch = ble_client.client.services.get_characteristic(LIVE_AUDIO_CTRL_CHAR_UUID)
+        if ch:
+            await ble_client.client.write_gatt_char(ch, bytearray([1]))
+            _live_audio_active = True
+            broadcast_event("live_audio", {"active": True})
+            logger.info("Live audio started")
+            return {"status": "started"}
+        else:
+            raise HTTPException(404, "Live audio control characteristic not found")
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+@app.post("/api/liveaudio/stop")
+async def live_audio_stop():
+    global _live_audio_active
+    if not ble_client.is_connected or ble_client.client is None:
+        raise HTTPException(400, "BLE not connected")
+    try:
+        ch = ble_client.client.services.get_characteristic(LIVE_AUDIO_CTRL_CHAR_UUID)
+        if ch:
+            await ble_client.client.write_gatt_char(ch, bytearray([0]))
+            _live_audio_active = False
+            broadcast_event("live_audio", {"active": False})
+            logger.info("Live audio stopped")
+            return {"status": "stopped"}
+        else:
+            raise HTTPException(404, "Live audio control characteristic not found")
+    except Exception as e:
+        raise HTTPException(500, str(e))
 
 # ── Device Control (reset, deepsleep, settings) ──
 RESET_CHAR_UUID = "12345678-1234-5678-1234-56789abcdef6"
 OLED_SETTINGS_CHAR_UUID = "12345678-1234-5678-1234-56789abcdef7"
+LIVE_AUDIO_CTRL_CHAR_UUID = "12345678-1234-5678-1234-56789abcdef9"
 
 @app.post("/api/device/control")
 async def device_control(body: dict):

@@ -42,6 +42,7 @@ struct audio_stream_config {
 	volatile bool *bt_connected;
 	volatile bool *deepsleep_block_notify;
 	volatile bool *deepsleep_send_once_audio;
+	volatile bool *live_audio_active;
 	struct oled_settings *oled_settings;
 };
 
