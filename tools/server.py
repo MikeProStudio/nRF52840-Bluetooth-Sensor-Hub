@@ -307,6 +307,8 @@ OLED_SETTINGS_CHAR_UUID = "12345678-1234-5678-1234-56789abcdef7"
 async def device_control(body: dict):
     mode = body.get("mode", 0)
     logger.info(f"Device control: mode={mode}")
+    if not ble_client.is_connected or ble_client.client is None:
+        raise HTTPException(400, "BLE not connected")
     try:
         ch = ble_client.client.services.get_characteristic(RESET_CHAR_UUID)
         if ch:
@@ -314,6 +316,8 @@ async def device_control(body: dict):
             return {"status": "ok", "mode": mode}
         else:
             raise HTTPException(404, "Reset characteristic not found")
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(500, f"Device control failed: {e}")
 

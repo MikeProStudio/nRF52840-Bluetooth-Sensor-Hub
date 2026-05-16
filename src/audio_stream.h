@@ -14,6 +14,7 @@ struct oled_settings {
 	uint8_t beacon_dwell_s;
 	uint8_t qr_dwell_s;
 	uint8_t imu_dwell_s;
+	uint8_t power_dwell_s;
 	uint8_t mic_dwell_s;
 	uint8_t view_override;
 	uint8_t qr_enable;

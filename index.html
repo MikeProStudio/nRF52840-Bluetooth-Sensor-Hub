@@ -356,7 +356,14 @@
                 <div class="setting-row">
                     <span class="setting-label">IMU View <small>Accel/Gyro data (connected)</small></span>
                     <div class="setting-control">
-                        <input type="number" id="set-imu-dwell" min="1" max="60" value="5">
+                        <input type="number" id="set-imu-dwell" min="1" max="60" value="8">
+                        <span style="font-size:0.75rem;color:var(--text-dim);">sec</span>
+                    </div>
+                </div>
+                <div class="setting-row">
+                    <span class="setting-label">Power View <small>Gyro YZ + Battery + Power (connected)</small></span>
+                    <div class="setting-control">
+                        <input type="number" id="set-power-dwell" min="1" max="60" value="5">
                         <span style="font-size:0.75rem;color:var(--text-dim);">sec</span>
                     </div>
                 </div>
@@ -372,7 +379,7 @@
             <div class="settings-section">
                 <h3>View Mode (connected)</h3>
                 <div class="setting-row">
-                    <span class="setting-label">Active View <small>Auto cycles between Dashboard + Mic PSD</small></span>
+                    <span class="setting-label">Active View <small>Auto: IMU+Power+Mic | Dashboard: IMU+Power | Mic only</small></span>
                     <div class="setting-control" style="gap: 16px;">
                         <label style="display:flex;align-items:center;gap:4px;font-size:0.8rem;cursor:pointer;">
                             <input type="radio" name="view-mode" value="0" checked> Auto
@@ -923,18 +930,19 @@
             document.getElementById('set-beacon-dwell').value = dv.getUint8(0);
             document.getElementById('set-qr-dwell').value = dv.getUint8(1);
             document.getElementById('set-imu-dwell').value = dv.getUint8(2);
-            document.getElementById('set-mic-dwell').value = dv.getUint8(3);
-            const override = dv.getUint8(4);
+            document.getElementById('set-power-dwell').value = dv.getUint8(3);
+            document.getElementById('set-mic-dwell').value = dv.getUint8(4);
+            const override = dv.getUint8(5);
             document.querySelector('input[name="view-mode"][value="' + override + '"]').checked = true;
-            document.getElementById('set-qr-enable').checked = dv.getUint8(5) !== 0;
-            contrastSlider.value = dv.getUint8(6);
-            contrastVal.textContent = dv.getUint8(6);
-            document.getElementById('set-invert').checked = dv.getUint8(7) !== 0;
-            document.getElementById('set-sleep-min').value = dv.getUint8(8);
-            document.getElementById('set-led-enable').checked = dv.getUint8(9) !== 0;
-            document.getElementById('set-deepsleep-enable').checked = dv.getUint8(10) !== 0;
-            document.getElementById('set-deepsleep-interval').value = dv.getUint8(11);
-            document.querySelector('input[name="deepsleep-oled"][value="' + dv.getUint8(12) + '"]').checked = true;
+            document.getElementById('set-qr-enable').checked = dv.getUint8(6) !== 0;
+            contrastSlider.value = dv.getUint8(7);
+            contrastVal.textContent = dv.getUint8(7);
+            document.getElementById('set-invert').checked = dv.getUint8(8) !== 0;
+            document.getElementById('set-sleep-min').value = dv.getUint8(9);
+            document.getElementById('set-led-enable').checked = dv.getUint8(10) !== 0;
+            document.getElementById('set-deepsleep-enable').checked = dv.getUint8(11) !== 0;
+            document.getElementById('set-deepsleep-interval').value = dv.getUint8(12);
+            document.querySelector('input[name="deepsleep-oled"][value="' + dv.getUint8(13) + '"]').checked = true;
             document.getElementById('settings-save').disabled = false;
             console.log("Senior-UI: OLED settings loaded from device.");
         } catch(e) {
@@ -944,21 +952,22 @@
 
     async function writeSettingsToDevice() {
         if (!settingsService) return;
-        const buf = new Uint8Array(13);
+        const buf = new Uint8Array(14);
         buf[0] = parseInt(document.getElementById('set-beacon-dwell').value) || 2;
         buf[1] = parseInt(document.getElementById('set-qr-dwell').value) || 10;
-        buf[2] = parseInt(document.getElementById('set-imu-dwell').value) || 5;
-        buf[3] = parseInt(document.getElementById('set-mic-dwell').value) || 5;
-        buf[4] = parseInt(document.querySelector('input[name="view-mode"]:checked').value) || 0;
-        buf[5] = document.getElementById('set-qr-enable').checked ? 1 : 0;
-        buf[6] = parseInt(document.getElementById('set-contrast').value) || 128;
-        buf[7] = document.getElementById('set-invert').checked ? 1 : 0;
-        buf[8] = parseInt(document.getElementById('set-sleep-min').value) || 0;
-        buf[9] = document.getElementById('set-led-enable').checked ? 1 : 0;
-        buf[10] = 0;
+        buf[2] = parseInt(document.getElementById('set-imu-dwell').value) || 8;
+        buf[3] = parseInt(document.getElementById('set-power-dwell').value) || 5;
+        buf[4] = parseInt(document.getElementById('set-mic-dwell').value) || 5;
+        buf[5] = parseInt(document.querySelector('input[name="view-mode"]:checked').value) || 0;
+        buf[6] = document.getElementById('set-qr-enable').checked ? 1 : 0;
+        buf[7] = parseInt(document.getElementById('set-contrast').value) || 128;
+        buf[8] = document.getElementById('set-invert').checked ? 1 : 0;
+        buf[9] = parseInt(document.getElementById('set-sleep-min').value) || 0;
+        buf[10] = document.getElementById('set-led-enable').checked ? 1 : 0;
+        buf[11] = 0;
         let iv = parseInt(document.getElementById('set-deepsleep-interval').value);
-        buf[11] = (iv >= 0 && iv <= 5) ? iv : 1;
-        buf[12] = parseInt(document.querySelector('input[name="deepsleep-oled"]:checked').value) || 0;
+        buf[12] = (iv >= 0 && iv <= 5) ? iv : 1;
+        buf[13] = parseInt(document.querySelector('input[name="deepsleep-oled"]:checked').value) || 0;
         try {
             const c = await settingsService.getCharacteristic(OLED_SETTINGS_CHAR);
             await c.writeValue(buf);
@@ -1020,22 +1029,23 @@
     document.getElementById('ds-confirm-yes').addEventListener('click', async () => {
         document.getElementById('deepsleep-confirm').classList.remove('active');
         if (!settingsService) return;
-        const buf = new Uint8Array(13);
+        const buf = new Uint8Array(14);
         buf[0] = parseInt(document.getElementById('set-beacon-dwell').value) || 2;
         buf[1] = parseInt(document.getElementById('set-qr-dwell').value) || 10;
-        buf[2] = parseInt(document.getElementById('set-imu-dwell').value) || 5;
-        buf[3] = parseInt(document.getElementById('set-mic-dwell').value) || 5;
-        buf[4] = parseInt(document.querySelector('input[name="view-mode"]:checked').value) || 0;
-        buf[5] = document.getElementById('set-qr-enable').checked ? 1 : 0;
-        buf[6] = parseInt(document.getElementById('set-contrast').value) || 128;
-        buf[7] = document.getElementById('set-invert').checked ? 1 : 0;
-        buf[8] = parseInt(document.getElementById('set-sleep-min').value) || 0;
-        buf[9] = document.getElementById('set-led-enable').checked ? 1 : 0;
-        buf[10] = 1;
+        buf[2] = parseInt(document.getElementById('set-imu-dwell').value) || 8;
+        buf[3] = parseInt(document.getElementById('set-power-dwell').value) || 5;
+        buf[4] = parseInt(document.getElementById('set-mic-dwell').value) || 5;
+        buf[5] = parseInt(document.querySelector('input[name="view-mode"]:checked').value) || 0;
+        buf[6] = document.getElementById('set-qr-enable').checked ? 1 : 0;
+        buf[7] = parseInt(document.getElementById('set-contrast').value) || 128;
+        buf[8] = document.getElementById('set-invert').checked ? 1 : 0;
+        buf[9] = parseInt(document.getElementById('set-sleep-min').value) || 0;
+        buf[10] = document.getElementById('set-led-enable').checked ? 1 : 0;
+        buf[11] = 1;
         let tmp = parseInt(document.getElementById('set-deepsleep-interval').value);
         const intervalIdx = (tmp >= 0 && tmp <= 5) ? tmp : 1;
-        buf[11] = intervalIdx;
-        buf[12] = parseInt(document.querySelector('input[name="deepsleep-oled"]:checked').value) || 0;
+        buf[12] = intervalIdx;
+        buf[13] = parseInt(document.querySelector('input[name="deepsleep-oled"]:checked').value) || 0;
         try {
             const c = await settingsService.getCharacteristic(OLED_SETTINGS_CHAR);
             await c.writeValue(buf);
@@ -1316,15 +1326,21 @@
         }, true);
 
         document.getElementById('reset-btn').onclick = async () => {
-            if (confirm("System will enter UF2 Bootloader Mode. Current session will end. Proceed?")) {
-                try {
+            if (!confirm("System will enter UF2 Bootloader Mode. Current session will end. Proceed?")) return;
+            try {
+                if (settingsService) {
+                    const c = await settingsService.getCharacteristic(RESET_CHAR);
+                    await c.writeValue(new Uint8Array([1]));
+                } else if (backendBaseUrl) {
                     await fetch(`${backendBaseUrl}/api/device/control`, {
                         method: 'POST',
                         headers: {'Content-Type': 'application/json'},
                         body: JSON.stringify({mode: 1})
                     });
-                } catch (e) { console.error("Reset failed", e); }
-            }
+                } else {
+                    console.error("Reset failed: no BLE connection or backend available");
+                }
+            } catch (e) { console.error("Reset failed", e); }
         };
 
         startRenderLoop();

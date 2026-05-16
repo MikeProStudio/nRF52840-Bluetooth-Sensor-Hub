@@ -106,7 +106,8 @@ static struct batt_data_t battery_status = {0};
 static struct oled_settings oled_settings = {
 	.beacon_dwell_s = 2,
 	.qr_dwell_s = 10,
-	.imu_dwell_s = 5,
+	.imu_dwell_s = 8,
+	.power_dwell_s = 5,
 	.mic_dwell_s = 5,
 	.view_override = 0,
 	.qr_enable = 1,
@@ -174,7 +175,7 @@ static void oled_check_sleep(void);
 static void enter_deep_sleep(uint32_t sec);
 static void wake_from_deep_sleep(void);
 static void oled_clear(void);
-static void oled_puts(uint16_t x, uint16_t y, const char *str);
+static void oled_puts(int16_t x, int16_t y, const char *str);
 static void oled_flush(void);
 static int oled_init(void);
 static k_tid_t main_thread_id;
@@ -186,6 +187,8 @@ static struct k_work_delayable oled_work;
 static uint8_t oled_sub_phase;
 static uint64_t imu_view_start;
 static uint64_t mic_view_start;
+static uint64_t page_start_time;
+
 
 /* Phase definitions */
 #define PHASE_WELCOME   0
@@ -554,6 +557,7 @@ static void connected(struct bt_conn *conn, uint8_t err)
 		bt_connected_flag = true;
 		oled_phase = PHASE_CONNECTED;
 		oled_sub_phase = 0;
+		page_start_time = k_uptime_get();
 		imu_view_start = k_uptime_get();
 		oled_check_sleep();
 		k_work_reschedule_for_queue(&oled_work_q, &oled_work, K_NO_WAIT);
@@ -817,31 +821,35 @@ static int setup_nfc(void)
 }
 
 /* --- OLED Display Functions --- */
-static void oled_set_pixel(uint16_t x, uint16_t y, uint8_t on)
+static void oled_set_pixel(int16_t x, int16_t y, uint8_t on)
 {
-	if (x >= OLED_W || y >= OLED_H) return;
-	uint16_t page = y / 8;
-	uint8_t bit = y % 8;
-	uint16_t idx = page * OLED_W + x;
+	if (x < 0 || x >= OLED_W || y < 0 || y >= OLED_H) return;
+	uint16_t page = (uint16_t)y / 8;
+	uint8_t bit = (uint8_t)(y % 8);
+	uint16_t idx = page * OLED_W + (uint16_t)x;
 	if (on) oled_fb[idx] |= (1 << bit);
 	else    oled_fb[idx] &= ~(1 << bit);
 }
 
-static void oled_putc_w(uint16_t x, uint16_t y, char c, uint8_t w)
+static void oled_putc_w(int16_t x, int16_t y, char c, uint8_t w)
 {
 	if (c < 0x20 || c > 0x7E) c = ' ';
 	if (w > 8) w = 8;
 	uint8_t idx = c - 0x20;
-	for (int row = 0; row < 8 && (y + row) < OLED_H; row++) {
+	for (int row = 0; row < 8; row++) {
+		int16_t cy = y + row;
+		if (cy < 0 || cy >= OLED_H) continue;
 		uint8_t bits = font8x8[idx][row];
-		for (int col = 0; col < w && (x + col) < OLED_W; col++) {
-			if (bits & (1 << (7 - col)))
-				oled_set_pixel(x + col, y + row, 1);
+		for (int col = 0; col < w; col++) {
+			int16_t cx = x + col;
+			if (cx >= OLED_W) break;
+			if (cx >= 0 && (bits & (1 << (7 - col))))
+				oled_set_pixel(cx, cy, 1);
 		}
 	}
 }
 
-static void oled_puts_w(uint16_t x, uint16_t y, const char *str, uint8_t w)
+static void oled_puts_w(int16_t x, int16_t y, const char *str, uint8_t w)
 {
 	while (*str) {
 		oled_putc_w(x, y, *str, w);
@@ -851,30 +859,34 @@ static void oled_puts_w(uint16_t x, uint16_t y, const char *str, uint8_t w)
 	}
 }
 
-static void oled_putc(uint16_t x, uint16_t y, char c)
+static void oled_putc(int16_t x, int16_t y, char c)
 {
 	oled_putc_w(x, y, c, 8);
 }
 
-static void oled_puts(uint16_t x, uint16_t y, const char *str)
+static void oled_puts(int16_t x, int16_t y, const char *str)
 {
 	oled_puts_w(x, y, str, 8);
 }
 
-static void oled_putc_8x16(uint16_t x, uint16_t y, char c)
+static void oled_putc_8x16(int16_t x, int16_t y, char c)
 {
 	if (c < 0x20 || c > 0x7E) c = ' ';
 	uint8_t idx = c - 0x20;
-	for (int row = 0; row < 16 && (y + row) < OLED_H; row++) {
+	for (int row = 0; row < 16; row++) {
+		int16_t cy = y + row;
+		if (cy < 0 || cy >= OLED_H) continue;
 		uint8_t bits = font8x16[idx][row];
-		for (int col = 0; col < 8 && (x + col) < OLED_W; col++) {
-			if (bits & (1 << (7 - col)))
-				oled_set_pixel(x + col, y + row, 1);
+		for (int col = 0; col < 8; col++) {
+			int16_t cx = x + col;
+			if (cx >= OLED_W) break;
+			if (cx >= 0 && (bits & (1 << (7 - col))))
+				oled_set_pixel(cx, cy, 1);
 		}
 	}
 }
 
-static void oled_puts_8x16(uint16_t x, uint16_t y, const char *str)
+static void oled_puts_8x16(int16_t x, int16_t y, const char *str)
 {
 	while (*str) {
 		oled_putc_8x16(x, y, *str);
@@ -982,16 +994,6 @@ static void oled_update_display(void)
 	oled_flush();
 }
 
-static void fmt_val(char *buf, int32_t val)
-{
-	int neg = (val < 0);
-	if (neg) val = -val;
-	int ip = val / 1000;
-	int fp = (val % 1000 + 5) / 10;
-	if (fp >= 100) { ip++; fp = 0; }
-	snprintf(buf, 10, "%s%d.%02u", neg ? "-" : " ", ip, (unsigned int)fp);
-}
-
 /* --- OLED Mic PSD Visualization --- */
 #define PSD_BINS 112
 #define CHART_X 16
@@ -1046,43 +1048,117 @@ static void oled_update_mic(void)
 	oled_flush();
 }
 
-static void oled_update_connected(void)
+static void fmt_val_signed(char *buf, int32_t val)
 {
-	char buf[28], xs[10], ys[10], zs[10], gxs[10], gys[10], gzs[10];
+	int neg = (val < 0);
+	if (neg) val = -val;
+	int ip = val / 1000;
+	int fp = (val % 1000 + 5) / 10;
+	if (fp >= 100) { ip++; fp = 0; }
+	snprintf(buf, 10, "%s%d.%02u", neg ? "-" : "+", ip, (unsigned int)fp);
+}
 
-	oled_clear();
+/* ── Scroll state ── */
+#define SCROLL_STEPS 12
+#define SCROLL_MS 30
+static bool oled_scroll_active;
+static uint8_t oled_scroll_step;
+static uint8_t oled_scroll_from;
+static uint8_t oled_scroll_to;
+
+/* Cubic ease-out: slow start, fast middle, smooth stop */
+static int ease_out_cubic(int step, int total)
+{
+	float t = (float)step / total;
+	float eased = 1.0f - (1.0f - t) * (1.0f - t) * (1.0f - t);
+	return (int)(eased * total + 0.5f);
+}
+
+/* IMU page: Acc X/Y/Z + Battery */
+static void oled_render_imu_at(int y_offs)
+{
+	char buf[24], xs[10], ys[10], zs[10];
 
 	int32_t ax = (int32_t)sys_get_le32(&accel_data.data[0]);
 	int32_t ay = (int32_t)sys_get_le32(&accel_data.data[4]);
 	int32_t az = (int32_t)sys_get_le32(&accel_data.data[8]);
+
+	fmt_val_signed(xs, ax); fmt_val_signed(ys, ay); fmt_val_signed(zs, az);
+
+	snprintf(buf, sizeof(buf), "Acc X%sm/s2", xs);
+	oled_puts_8x16(0, 0 + y_offs, buf);
+	snprintf(buf, sizeof(buf), "Acc Y%sm/s2", ys);
+	oled_puts_8x16(0, 16 + y_offs, buf);
+	snprintf(buf, sizeof(buf), "Acc Z%sm/s2", zs);
+	oled_puts_8x16(0, 32 + y_offs, buf);
+	snprintf(buf, sizeof(buf), "Bat %umV %u%%", battery_status.voltage_mv, battery_status.soc);
+	oled_puts_8x16(0, 48 + y_offs, buf);
+}
+
+/* Gyro page: Gyr X, Y, Z each on own line + Power/TX */
+static void oled_render_power_at(int y_offs)
+{
+	char buf[24], gxs[10], gys[10], gzs[10];
+
 	int32_t gx = (int32_t)sys_get_le32(&gyro_data.data[0]);
 	int32_t gy = (int32_t)sys_get_le32(&gyro_data.data[4]);
 	int32_t gz = (int32_t)sys_get_le32(&gyro_data.data[8]);
 
-	fmt_val(xs, ax); fmt_val(ys, ay); fmt_val(zs, az);
-	fmt_val(gxs, gx); fmt_val(gys, gy); fmt_val(gzs, gz);
+	fmt_val_signed(gxs, gx); fmt_val_signed(gys, gy); fmt_val_signed(gzs, gz);
 
 	const char *pwr;
 	switch (battery_status.status) {
-	case 1:  pwr = "Charging";   break;
-	case 2:  pwr = "USB Power";  break;
-	default: pwr = "Battery";    break;
+	case 1:  pwr = "CHG";  break;
+	case 2:  pwr = "USB";  break;
+	default: pwr = "BAT";  break;
 	}
 
-	oled_puts_w(0, 0, "Acc.(m/s^2)", 6);
-	snprintf(buf, sizeof(buf), "X%s Y%s Z%s", xs, ys, zs);
-	oled_puts_w(0, 10, buf, 6);
+	snprintf(buf, sizeof(buf), "Gyr X%sd/s", gxs);
+	oled_puts_8x16(0, 0 + y_offs, buf);
+	snprintf(buf, sizeof(buf), "Gyr Y%sd/s", gys);
+	oled_puts_8x16(0, 16 + y_offs, buf);
+	snprintf(buf, sizeof(buf), "Gyr Z%sd/s", gzs);
+	oled_puts_8x16(0, 32 + y_offs, buf);
+	snprintf(buf, sizeof(buf), "P:%s TX %ddBm", pwr, tx_power_level);
+	oled_puts_8x16(0, 48 + y_offs, buf);
+}
 
-	oled_puts_w(0, 22, "Gyr.(deg/s)", 6);
-	snprintf(buf, sizeof(buf), "X%s Y%s Z%s", gxs, gys, gzs);
-	oled_puts_w(0, 32, buf, 6);
-
-	snprintf(buf, sizeof(buf), "BAT %umV %u%%", battery_status.voltage_mv, battery_status.soc);
-	oled_puts_w(0, 44, buf, 6);
-	snprintf(buf, sizeof(buf), "PWR %s TX %ddBm", pwr, tx_power_level);
-	oled_puts_w(0, 54, buf, 6);
-
+/* Static display wrappers */
+static void oled_show_imu(void)
+{
+	oled_clear();
+	oled_render_imu_at(0);
 	oled_flush();
+}
+
+static void oled_show_power(void)
+{
+	oled_clear();
+	oled_render_power_at(0);
+	oled_flush();
+}
+
+/* Scroll animation: new content scrolls DOWN from above into view.
+   Old content goes the opposite direction (UP) out of view. */
+
+static void oled_scroll_frame(void)
+{
+	int total = SCROLL_STEPS;
+	int pos = ease_out_cubic(oled_scroll_step, total);
+	int from_offs = -pos;           /* 0 → -64: old scrolls UP out (opposite of entry) */
+	int to_offs = pos - OLED_H;     /* -64 → 0: new scrolls DOWN into view from above */
+
+	oled_clear();
+	if (oled_scroll_from == 0) oled_render_imu_at(from_offs);
+	else oled_render_power_at(from_offs);
+	if (oled_scroll_to == 0) oled_render_imu_at(to_offs);
+	else oled_render_power_at(to_offs);
+	oled_flush();
+
+	oled_scroll_step++;
+	if (oled_scroll_step >= total) {
+		oled_scroll_active = false;
+	}
 }
 
 static void oled_check_sleep(void)
@@ -1120,27 +1196,89 @@ static void oled_work_handler(struct k_work *work)
 		k_work_reschedule_for_queue(&oled_work_q, &oled_work, K_SECONDS(2));
 	} else if (bt_connected_flag) {
 		oled_last_activity = k_uptime_get();
-		if (oled_sub_phase == 0) {
-			oled_update_connected();
+		uint64_t now = k_uptime_get();
+
+		/* During active scroll, advance animation step */
+		if (oled_scroll_active) {
+			oled_scroll_frame();
+			if (oled_scroll_active) {
+				k_work_reschedule_for_queue(&oled_work_q, &oled_work, K_MSEC(SCROLL_MS));
+			} else {
+				/* Scroll finished — show target page and start its timer */
+				page_start_time = now;
+				k_work_reschedule_for_queue(&oled_work_q, &oled_work, K_MSEC(150));
+			}
+		} else if (oled_sub_phase == 0) {
+			/* Acc page: Acc X/Y/Z + Battery */
+			oled_show_imu();
 			if (oled_settings.view_override == 2) {
-				mic_view_start = k_uptime_get();
-				oled_sub_phase = 1;
-			} else if (oled_settings.view_override == 1 || k_uptime_get() - imu_view_start < (int64_t)oled_settings.imu_dwell_s * 1000) {
-				;
+				oled_scroll_from = 0; oled_scroll_to = 2;
+				oled_scroll_step = 0; oled_scroll_active = true;
+				oled_sub_phase = 2;
+				k_work_reschedule_for_queue(&oled_work_q, &oled_work, K_NO_WAIT);
+			} else if (oled_settings.view_override == 1) {
+				if (now - page_start_time >= (uint64_t)oled_settings.imu_dwell_s * 1000) {
+					oled_scroll_from = 0; oled_scroll_to = 1;
+					oled_scroll_step = 0; oled_scroll_active = true;
+					oled_sub_phase = 1;
+					k_work_reschedule_for_queue(&oled_work_q, &oled_work, K_NO_WAIT);
+				} else {
+					k_work_reschedule_for_queue(&oled_work_q, &oled_work, K_MSEC(150));
+				}
 			} else {
-				mic_view_start = k_uptime_get();
-				oled_sub_phase = 1;
+				if (now - page_start_time >= (uint64_t)oled_settings.imu_dwell_s * 1000) {
+					oled_scroll_from = 0; oled_scroll_to = 1;
+					oled_scroll_step = 0; oled_scroll_active = true;
+					oled_sub_phase = 1;
+					k_work_reschedule_for_queue(&oled_work_q, &oled_work, K_NO_WAIT);
+				} else {
+					k_work_reschedule_for_queue(&oled_work_q, &oled_work, K_MSEC(150));
+				}
 			}
-			k_work_reschedule_for_queue(&oled_work_q, &oled_work, K_MSEC(150));
+		} else if (oled_sub_phase == 1) {
+			/* Gyro page: Gyr X/Y/Z (each own line) + Pwr/TX */
+			oled_show_power();
+			if (oled_settings.view_override == 2) {
+				oled_scroll_from = 1; oled_scroll_to = 2;
+				oled_scroll_step = 0; oled_scroll_active = true;
+				oled_sub_phase = 2;
+				k_work_reschedule_for_queue(&oled_work_q, &oled_work, K_NO_WAIT);
+			} else if (oled_settings.view_override == 1) {
+				if (now - page_start_time >= (uint64_t)oled_settings.power_dwell_s * 1000) {
+					oled_scroll_from = 1; oled_scroll_to = 0;
+					oled_scroll_step = 0; oled_scroll_active = true;
+					oled_sub_phase = 0;
+					k_work_reschedule_for_queue(&oled_work_q, &oled_work, K_NO_WAIT);
+				} else {
+					k_work_reschedule_for_queue(&oled_work_q, &oled_work, K_MSEC(150));
+				}
+			} else {
+				if (now - page_start_time >= (uint64_t)oled_settings.power_dwell_s * 1000) {
+					oled_scroll_from = 1; oled_scroll_to = 2;
+					oled_scroll_step = 0; oled_scroll_active = true;
+					oled_sub_phase = 2;
+					k_work_reschedule_for_queue(&oled_work_q, &oled_work, K_NO_WAIT);
+				} else {
+					k_work_reschedule_for_queue(&oled_work_q, &oled_work, K_MSEC(150));
+				}
+			}
 		} else {
+			/* Mic PSD page */
 			oled_update_mic();
-			if (oled_settings.view_override == 2 || k_uptime_get() - mic_view_start < (int64_t)oled_settings.mic_dwell_s * 1000) {
-				;
+			if (oled_settings.view_override == 2) {
+				/* Stay in mic */
+				k_work_reschedule_for_queue(&oled_work_q, &oled_work, K_MSEC(150));
 			} else {
-				imu_view_start = k_uptime_get();
-				oled_sub_phase = 0;
+				/* Auto or Dashboard: cycle back to IMU */
+				if (now - page_start_time >= (uint64_t)oled_settings.mic_dwell_s * 1000) {
+					oled_scroll_from = 2; oled_scroll_to = 0;
+					oled_scroll_step = 0; oled_scroll_active = true;
+					oled_sub_phase = 0;
+					k_work_reschedule_for_queue(&oled_work_q, &oled_work, K_NO_WAIT);
+				} else {
+					k_work_reschedule_for_queue(&oled_work_q, &oled_work, K_MSEC(150));
+				}
 			}
-			k_work_reschedule_for_queue(&oled_work_q, &oled_work, K_MSEC(150));
 		}
 	} else if (oled_phase == PHASE_QR && oled_settings.qr_enable) {
 		oled_draw_qr_code();
