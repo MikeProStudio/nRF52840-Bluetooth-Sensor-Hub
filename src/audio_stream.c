@@ -12,7 +12,7 @@
 #include "audio_stream.h"
 #include "adpcm.h"
 
-#define AUDIO_GAIN 8.0f
+#define AUDIO_GAIN_DEFAULT 8.0f
 
 #define AUDIO_SAMPLE_RATE 16000
 #define AUDIO_SAMPLES_PER_BLOCK 512
@@ -136,7 +136,10 @@ static void audio_stream_thread_impl(void *p1, void *p2, void *p3)
 			uint32_t count = size / sizeof(int16_t);
 
 			for (uint32_t i = 0; i < count; i++) {
-				int32_t g = (int32_t)(samples[i] * AUDIO_GAIN);
+				const float fwGain = (ctx->cfg.oled_settings && ctx->cfg.oled_settings->mic_gain > 0)
+					? (float)ctx->cfg.oled_settings->mic_gain
+					: AUDIO_GAIN_DEFAULT;
+				int32_t g = (int32_t)(samples[i] * fwGain);
 				if (g > 32767) g = 32767;
 				if (g < -32768) g = -32768;
 				samples[i] = (int16_t)g;

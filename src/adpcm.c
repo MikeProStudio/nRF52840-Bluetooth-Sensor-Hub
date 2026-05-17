@@ -62,7 +62,7 @@ void adpcm_encode(struct adpcm_state *state, const int16_t *pcm, uint8_t *adpcm,
 		if (predictor < -32768) predictor = -32768;
 
 		step_index += index_adjust[nibble & 7];
-		if (step_index > 88) step_index = 88;
+		if (step_index < 0) step_index = 0;
 		if (step_index > 88) step_index = 88;
 
 		if (i & 1) {
@@ -113,6 +113,7 @@ void adpcm_decode(struct adpcm_state *state, const uint8_t *adpcm, int16_t *pcm,
 		if (predictor < -32768) predictor = -32768;
 
 		step_index += index_adjust[nibble & 7];
+		if (step_index < 0) step_index = 0;
 		if (step_index > 88) step_index = 88;
 
 		pcm[i] = predictor;

@@ -26,6 +26,7 @@ struct oled_settings {
 	uint8_t deepsleep_interval;
 	uint8_t deepsleep_oled;
 	int8_t tx_power;
+	uint8_t mic_gain;
 } __packed;
 
 struct audio_stream_config {

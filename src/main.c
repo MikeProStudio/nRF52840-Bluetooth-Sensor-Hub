@@ -125,6 +125,7 @@ static struct oled_settings oled_settings = {
 	.deepsleep_interval = 1,
 	.deepsleep_oled = 0,
 	.tx_power = 0,
+	.mic_gain = 8,
 };
 
 static uint64_t oled_last_activity;

@@ -497,6 +497,17 @@
                 </div>
             </div>
 
+            <div class="settings-section">
+                <h3>Microphone</h3>
+                <div class="setting-row">
+                    <span class="setting-label">Firmware Gain <small>Pre-ADC gain on PDM mic (1-16x). 8=default</small></span>
+                    <div class="setting-control">
+                        <input type="number" id="set-mic-gain" min="1" max="16" value="8" style="width:55px;">
+                        <span style="font-size:0.75rem;color:var(--text-dim);">x</span>
+                    </div>
+                </div>
+            </div>
+
             <div class="settings-section" style="border-top:1px solid var(--border);padding-top:12px;margin-bottom:0;">
                 <h3>System Info</h3>
                 <div class="setting-row">
@@ -640,23 +651,32 @@
                 <button id="assistant-toggle-btn" style="display:none;padding:8px 14px;font-size:0.7rem;" disabled>AI Mode: OFF</button>
                 <button id="live-audio-btn" disabled style="padding:8px 14px;font-size:0.7rem;border-color:var(--primary);color:var(--primary);">🔴 Live Audio</button>
                 <button id="nr-toggle-btn" disabled style="padding:8px 14px;font-size:0.7rem;border-color:var(--green);color:var(--green);">NR: ON</button>
+                <button id="bypass-btn" disabled style="padding:8px 14px;font-size:0.7rem;border-color:var(--text-dim);color:var(--text-dim);">Bypass: OFF</button>
             </div>
             <audio id="audio-player" style="display:none" controls></audio>
             <div class="gain-row">
                 <span style="font-size:0.75rem;color:var(--text-dim);">Gain:</span>
-                <input type="range" id="gain-slider" min="0.1" max="15.0" step="0.1" value="8.0" list="gain-ticks">
+                <input type="range" id="gain-slider" min="0.1" max="15.0" step="0.1" value="1.0" list="gain-ticks">
                 <datalist id="gain-ticks">
                     <option value="0.5"><option value="1"><option value="2"><option value="3">
                     <option value="4"><option value="5"><option value="6"><option value="8">
                     <option value="10"><option value="12"><option value="15">
                 </datalist>
-                <span class="gain-label" id="gain-label">8.0x</span>
+                <span class="gain-label" id="gain-label">1.0x</span>
+            </div>
+            <div class="gain-row" style="margin-bottom:4px;">
+                <span style="font-size:0.65rem;color:var(--text-dim);" id="total-gain-display">Total: 8.0x (fw 8.0x × client 1.0x)</span>
             </div>
             <div class="nr-config-row" id="nr-config" style="display:flex;align-items:center;gap:12px;margin-bottom:6px;">
                 <span style="font-size:0.65rem;color:var(--text-dim);">NR Sens:</span>
                 <input type="range" id="nr-sens" min="1" max="100" value="30" style="width:80px;accent-color:var(--green);">
                 <span style="font-size:0.65rem;color:var(--text-dim);">Thresh:</span>
                 <input type="range" id="nr-thresh" min="10" max="100" value="40" style="width:80px;accent-color:var(--green);">
+            </div>
+            <div class="gain-row" style="margin-bottom:6px; font-size:0.65rem; color:var(--text-dim); gap:16px;">
+                <span>Peak pre-NR: <span id="peak-pre-nr" style="color:var(--primary);font-family:'JetBrains Mono';">0.00</span></span>
+                <span>Peak post-NR: <span id="peak-post-nr" style="color:var(--green);font-family:'JetBrains Mono';">0.00</span></span>
+                <span>dB diff: <span id="peak-db-diff" style="color:var(--audio);font-family:'JetBrains Mono';">0.0</span></span>
             </div>
             <div class="waveform-container">
                 <canvas id="waveformCanvas"></canvas>
@@ -734,31 +754,82 @@
     let nrEnabled = true;
     let nrNoiseFloor = 0.0005;
     let nrSmoothedRms = 0.0005;
+    let bypassEnabled = false;
+    const FIRMWARE_GAIN_DEFAULT = 8.0;
+    let firmwareGain = FIRMWARE_GAIN_DEFAULT;
+    let peakPreNR = 0.0;
+    let peakPostNR = 0.0;
 
     function processAudio(samples) {
-        const gain = parseFloat(document.getElementById('gain-slider').value) || 8.0;
+        const gain = parseFloat(document.getElementById('gain-slider').value) || 1.0;
+        if (bypassEnabled) {
+            const out = new Int16Array(samples.length);
+            let peak = 0;
+            for (let i = 0; i < samples.length; i++) {
+                const v = samples[i];
+                out[i] = v;
+                const abs = Math.abs(v) / 32768;
+                if (abs > peak) peak = abs;
+            }
+            peakPreNR = peak;
+            peakPostNR = peak;
+            updateTotalGainDisplay(gain);
+            return out;
+        }
         if (!nrEnabled) {
             const out = new Int16Array(samples.length);
-            for (let i = 0; i < samples.length; i++) { let v=Math.round(samples[i]*gain); if(v>32767)v=32767; else if(v<-32768)v=-32768; out[i]=v; }
+            let peak = 0;
+            for (let i = 0; i < samples.length; i++) { let v=Math.round(samples[i]*gain); if(v>32767)v=32767; else if(v<-32768)v=-32768; out[i]=v; const abs=Math.abs(v)/32768; if(abs>peak)peak=abs; }
+            peakPreNR = peak;
+            peakPostNR = peak;
+            updateTotalGainDisplay(gain);
             return out;
         }
         const nrSens=(parseFloat(document.getElementById('nr-sens').value)||30)/100;
         const nrThresh=(parseFloat(document.getElementById('nr-thresh').value)||40)/10;
-        let sumSq=0; for(let i=0;i<samples.length;i++){const s=samples[i]/32768;sumSq+=s*s;}
+        let sumSq=0; let peakPre=0;
+        for(let i=0;i<samples.length;i++){const s=samples[i]/32768;sumSq+=s*s;const abs=Math.abs(s);if(abs>peakPre)peakPre=abs;}
         const blockRms=Math.sqrt(sumSq/samples.length)||1e-7;
         const alphaUp=0.2, alphaDown=0.02;
         if(blockRms>nrSmoothedRms) nrSmoothedRms=alphaUp*blockRms+(1-alphaUp)*nrSmoothedRms;
         else nrSmoothedRms=alphaDown*blockRms+(1-alphaDown)*nrSmoothedRms;
-        const alphaFloor=nrSens*0.0033;
+        const alphaFloor=nrSens*0.05;
         nrNoiseFloor=(1-alphaFloor)*nrNoiseFloor+alphaFloor*Math.min(nrNoiseFloor,nrSmoothedRms);
         const noiseRef=Math.max(nrNoiseFloor*nrThresh,0.0002);
         const snr=nrSmoothedRms/noiseRef;
-        let nrGain=(snr>1)?Math.min(1,(snr-0.5)/snr):Math.max(0.05,snr*snr*5);
-        nrGain=0.05+0.95*nrGain;
+        let nrGain=(snr>1)?Math.min(1,(snr-0.5)/snr):Math.max(0.05,snr*snr*0.5);
+        nrGain=0.01+0.99*nrGain;
         const totalGain=gain*nrGain;
         const out=new Int16Array(samples.length);
-        for(let i=0;i<samples.length;i++){let v=Math.round(samples[i]*totalGain);if(v>32767)v=32767;else if(v<-32768)v=-32768;out[i]=v;}
+        let peakPost=0;
+        for(let i=0;i<samples.length;i++){let v=Math.round(samples[i]*totalGain);if(v>32767)v=32767;else if(v<-32768)v=-32768;out[i]=v;const abs=Math.abs(v)/32768;if(abs>peakPost)peakPost=abs;}
+        peakPreNR = peakPre / 32768;
+        peakPostNR = peakPost;
+        updateTotalGainDisplay(gain);
+        updatePeakDisplay();
         return out;
+    }
+
+    let lastPeakDisplayTime = 0;
+    function updatePeakDisplay() {
+        const now = performance.now();
+        if (now - lastPeakDisplayTime < 200) return;
+        lastPeakDisplayTime = now;
+        const preEl = document.getElementById('peak-pre-nr');
+        const postEl = document.getElementById('peak-post-nr');
+        const diffEl = document.getElementById('peak-db-diff');
+        if (preEl) preEl.innerText = (peakPreNR * 100).toFixed(1) + '%';
+        if (postEl) postEl.innerText = (peakPostNR * 100).toFixed(1) + '%';
+        if (diffEl && peakPreNR > 0 && peakPostNR > 0) {
+            const dbDiff = 20 * Math.log10(Math.max(peakPostNR, 0.0001) / Math.max(peakPreNR, 0.0001));
+            diffEl.innerText = dbDiff.toFixed(1) + ' dB';
+        }
+    }
+
+    function updateTotalGainDisplay(clientGain) {
+        const total = firmwareGain * clientGain;
+        const el = document.getElementById('total-gain-display');
+        if (el) el.innerText = 'Total: ' + total.toFixed(1) + 'x (fw ' + firmwareGain.toFixed(1) + 'x × client ' + clientGain.toFixed(1) + 'x)';
     }
 
     // --- Senior Dev: NFC Comfort Trick PIN Parsing & Timer ---
@@ -1047,6 +1118,10 @@
             document.getElementById('set-deepsleep-interval').value = dv.getUint8(12);
             document.querySelector('input[name="deepsleep-oled"][value="' + dv.getUint8(13) + '"]').checked = true;
             document.getElementById('set-tx-power').value = dv.getInt8(14);
+            const micGain = dv.getUint8(15) || 8;
+            document.getElementById('set-mic-gain').value = micGain;
+            firmwareGain = micGain;
+            updateTotalGainDisplay(parseFloat(document.getElementById('gain-slider').value) || 1.0);
         } catch(e) {
             console.error("Failed to read OLED settings:", e);
         }
@@ -1054,7 +1129,7 @@
 
     async function writeSettingsToDevice() {
         if (!settingsService) return;
-        const buf = new Uint8Array(15);
+        const buf = new Uint8Array(16);
         buf[0] = parseInt(document.getElementById('set-beacon-dwell').value) || 2;
         buf[1] = parseInt(document.getElementById('set-qr-dwell').value) || 10;
         buf[2] = parseInt(document.getElementById('set-imu-dwell').value) || 8;
@@ -1071,6 +1146,7 @@
         buf[12] = (iv >= 0 && iv <= 5) ? iv : 1;
         buf[13] = parseInt(document.querySelector('input[name="deepsleep-oled"]:checked').value) || 0;
         buf[14] = parseInt(document.getElementById('set-tx-power').value) || 0;
+        buf[15] = parseInt(document.getElementById('set-mic-gain').value) || 8;
         try {
             const c = await settingsService.getCharacteristic(OLED_SETTINGS_CHAR);
             await c.writeValue(buf);
@@ -1143,7 +1219,7 @@
     document.getElementById('ds-confirm-yes').addEventListener('click', async () => {
         document.getElementById('deepsleep-confirm').classList.remove('active');
         if (!settingsService) return;
-        const buf = new Uint8Array(15);
+        const buf = new Uint8Array(16);
         buf[0] = parseInt(document.getElementById('set-beacon-dwell').value) || 2;
         buf[1] = parseInt(document.getElementById('set-qr-dwell').value) || 10;
         buf[2] = parseInt(document.getElementById('set-imu-dwell').value) || 8;
@@ -1161,6 +1237,7 @@
         buf[12] = intervalIdx;
         buf[13] = parseInt(document.querySelector('input[name="deepsleep-oled"]:checked').value) || 0;
         buf[14] = parseInt(document.getElementById('set-tx-power').value) || 0;
+        buf[15] = parseInt(document.getElementById('set-mic-gain').value) || 8;
         try {
             const c = await settingsService.getCharacteristic(OLED_SETTINGS_CHAR);
             await c.writeValue(buf);
@@ -1212,6 +1289,7 @@
         document.getElementById('deepsleep-btn').style.display = 'none';
         document.getElementById('live-audio-btn').disabled = true;
         document.getElementById('nr-toggle-btn').disabled = true;
+        document.getElementById('bypass-btn').disabled = true;
         document.getElementById('rec-ctrl-btn').disabled = true;
         document.getElementById('play-ctrl-btn').disabled = true;
         liveAudioActive = false;
@@ -1258,6 +1336,7 @@
         document.getElementById('deepsleep-btn').style.display = 'none';
         document.getElementById('live-audio-btn').disabled = true;
         document.getElementById('nr-toggle-btn').disabled = true;
+        document.getElementById('bypass-btn').disabled = true;
         document.getElementById('rec-ctrl-btn').disabled = true;
         document.getElementById('play-ctrl-btn').disabled = true;
         liveAudioActive = false;
@@ -1473,7 +1552,8 @@
                 localAdpcmState = { predictor: 0, stepIndex: 0 };
             }
             const adpcmPayload = data.slice(1);
-            const pcm = processAudio(adpcmDecode(adpcmPayload, localAdpcmState));
+            const rawPcm = adpcmDecode(adpcmPayload, localAdpcmState);
+            const pcm = processAudio(rawPcm);
             if (localRecording) {
                 for (let i = 0; i < pcm.length; i++) localAudioPcm.push(pcm[i]);
             }
@@ -1552,6 +1632,7 @@
             document.getElementById('deepsleep-btn').style.display = 'block';
             document.getElementById('live-audio-btn').disabled = false;
             document.getElementById('nr-toggle-btn').disabled = false;
+            document.getElementById('bypass-btn').disabled = false;
             document.getElementById('gain-slider').disabled = false;
             bleConnected = true;
             manualDisconnect = false;
@@ -1639,6 +1720,7 @@
                 document.getElementById('chat-send-btn').disabled = false;
                 document.getElementById('gain-slider').disabled = false;
                 document.getElementById('nr-toggle-btn').disabled = false;
+            document.getElementById('bypass-btn').disabled = false;
                 document.getElementById('ble-connect-btn').disabled = false;
                 document.getElementById('ble-scan-btn').style.display = 'inline-block';
                 document.getElementById('ble-scan-btn').disabled = false;
@@ -1714,12 +1796,14 @@
         document.getElementById('chat-send-btn').disabled = true;
         document.getElementById('gain-slider').disabled = true;
         document.getElementById('nr-toggle-btn').disabled = true;
+        document.getElementById('bypass-btn').disabled = true;
         document.getElementById('ble-scan-btn').style.display = 'none';
         document.getElementById('ble-scan-btn').disabled = true;
         document.getElementById('assistant-toggle-btn').style.display = 'none';
         document.getElementById('assistant-toggle-btn').disabled = true;
         document.getElementById('live-audio-btn').disabled = true;
         document.getElementById('nr-toggle-btn').disabled = true;
+        document.getElementById('bypass-btn').disabled = true;
         document.getElementById('rec-ctrl-btn').disabled = true;
         document.getElementById('play-ctrl-btn').disabled = true;
         liveAudioActive = false;
@@ -1796,6 +1880,7 @@
             btn.style.color = 'var(--accent)';
             document.getElementById('live-audio-btn').disabled = false;
             document.getElementById('nr-toggle-btn').disabled = false;
+            document.getElementById('bypass-btn').disabled = false;
             document.getElementById('gain-slider').disabled = false;
             document.getElementById('recording-duration').innerText = 'BLE: ' + (data.device || 'Online');
         } catch (e) {
@@ -1836,6 +1921,7 @@
     document.getElementById('gain-slider').addEventListener('input', async () => {
         const val = parseFloat(document.getElementById('gain-slider').value);
         document.getElementById('gain-label').innerText = val.toFixed(1) + 'x';
+        updateTotalGainDisplay(val);
     });
 
     document.getElementById('nr-toggle-btn').addEventListener('click', () => {
@@ -1850,6 +1936,22 @@
             btn.style.borderColor = 'var(--text-dim)';
             btn.style.color = 'var(--text-dim)';
         }
+    });
+
+    document.getElementById('bypass-btn').addEventListener('click', () => {
+        bypassEnabled = !bypassEnabled;
+        const btn = document.getElementById('bypass-btn');
+        if (bypassEnabled) {
+            btn.innerText = 'Bypass: ON';
+            btn.style.borderColor = 'var(--accent)';
+            btn.style.color = 'var(--accent)';
+        } else {
+            btn.innerText = 'Bypass: OFF';
+            btn.style.borderColor = 'var(--text-dim)';
+            btn.style.color = 'var(--text-dim)';
+        }
+        nrNoiseFloor = 0.0005;
+        nrSmoothedRms = 0.0005;
     });
 
     // ── Live Audio Mode ──
