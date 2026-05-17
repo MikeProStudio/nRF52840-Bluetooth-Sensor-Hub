@@ -1212,6 +1212,8 @@
         document.getElementById('deepsleep-btn').style.display = 'none';
         document.getElementById('live-audio-btn').disabled = true;
         document.getElementById('nr-toggle-btn').disabled = true;
+        document.getElementById('rec-ctrl-btn').disabled = true;
+        document.getElementById('play-ctrl-btn').disabled = true;
         liveAudioActive = false;
         document.getElementById('live-audio-btn').innerText = '🔴 Live Audio';
         document.getElementById('live-audio-btn').style.borderColor = '';
@@ -1256,6 +1258,8 @@
         document.getElementById('deepsleep-btn').style.display = 'none';
         document.getElementById('live-audio-btn').disabled = true;
         document.getElementById('nr-toggle-btn').disabled = true;
+        document.getElementById('rec-ctrl-btn').disabled = true;
+        document.getElementById('play-ctrl-btn').disabled = true;
         liveAudioActive = false;
         document.getElementById('live-audio-btn').innerText = '🔴 Live Audio';
         document.getElementById('live-audio-btn').style.borderColor = '';
@@ -1506,6 +1510,7 @@
         document.getElementById('live-audio-btn').disabled = false;
         document.getElementById('nr-toggle-btn').disabled = false;
         document.getElementById('gain-slider').disabled = false;
+        document.getElementById('rec-ctrl-btn').disabled = false;
         startRenderLoop();
     }
 
@@ -1715,6 +1720,8 @@
         document.getElementById('assistant-toggle-btn').disabled = true;
         document.getElementById('live-audio-btn').disabled = true;
         document.getElementById('nr-toggle-btn').disabled = true;
+        document.getElementById('rec-ctrl-btn').disabled = true;
+        document.getElementById('play-ctrl-btn').disabled = true;
         liveAudioActive = false;
         document.getElementById('live-audio-btn').innerText = '🔴 Live Audio';
         document.getElementById('live-audio-btn').style.borderColor = '';
